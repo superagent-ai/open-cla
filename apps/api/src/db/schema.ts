@@ -18,7 +18,18 @@ const timestamps = {
 
 export const claDocumentSource = pgEnum("cla_document_source", [
   "repository",
-  "default_template"
+  "default_template",
+  "managed_template"
+]);
+
+export const claTemplateSource = pgEnum("cla_template_source", [
+  "default",
+  "uploaded"
+]);
+
+export const repositoryTemplateMode = pgEnum("repository_template_mode", [
+  "repository",
+  "managed"
 ]);
 
 export const checkConclusion = pgEnum("check_conclusion", [
@@ -106,6 +117,72 @@ export const claDocuments = pgTable(
     )
   })
 );
+
+export const claTemplates = pgTable(
+  "cla_templates",
+  {
+    claTemplateId: text("cla_template_id").primaryKey(),
+    repositoryId: text("repository_id").references(() => repositories.repositoryId, {
+      onDelete: "cascade"
+    }),
+    source: claTemplateSource("source").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    createdByGithubUserId: text("created_by_github_user_id").references(
+      () => githubUsers.githubUserId,
+      { onDelete: "set null" }
+    ),
+    createdByLogin: text("created_by_login"),
+    ...timestamps
+  },
+  (table) => ({
+    repositoryIdx: index("cla_templates_repository_idx").on(table.repositoryId),
+    sourceNameIdx: index("cla_templates_source_name_idx").on(table.source, table.name)
+  })
+);
+
+export const claTemplateVersions = pgTable(
+  "cla_template_versions",
+  {
+    claTemplateVersionId: text("cla_template_version_id").primaryKey(),
+    claTemplateId: text("cla_template_id")
+      .notNull()
+      .references(() => claTemplates.claTemplateId, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    versionHash: text("version_hash").notNull(),
+    createdByGithubUserId: text("created_by_github_user_id").references(
+      () => githubUsers.githubUserId,
+      { onDelete: "set null" }
+    ),
+    createdByLogin: text("created_by_login"),
+    ...timestamps
+  },
+  (table) => ({
+    templateHashUnique: uniqueIndex("cla_template_versions_template_hash_unique").on(
+      table.claTemplateId,
+      table.versionHash
+    ),
+    hashIdx: index("cla_template_versions_hash_idx").on(table.versionHash)
+  })
+);
+
+export const repositoryTemplateSettings = pgTable("repository_template_settings", {
+  repositoryId: text("repository_id")
+    .primaryKey()
+    .references(() => repositories.repositoryId, { onDelete: "cascade" }),
+  mode: repositoryTemplateMode("mode").notNull().default("repository"),
+  claTemplateVersionId: text("cla_template_version_id").references(
+    () => claTemplateVersions.claTemplateVersionId,
+    { onDelete: "set null" }
+  ),
+  updatedByGithubUserId: text("updated_by_github_user_id").references(
+    () => githubUsers.githubUserId,
+    { onDelete: "set null" }
+  ),
+  updatedByLogin: text("updated_by_login"),
+  ...timestamps
+});
 
 export const personalSignatures = pgTable(
   "personal_signatures",
@@ -202,5 +279,8 @@ export const pullRequestChecks = pgTable(
 
 export type GitHubUser = typeof githubUsers.$inferSelect;
 export type ClaDocument = typeof claDocuments.$inferSelect;
+export type ClaTemplate = typeof claTemplates.$inferSelect;
+export type ClaTemplateVersion = typeof claTemplateVersions.$inferSelect;
+export type RepositoryTemplateSettings = typeof repositoryTemplateSettings.$inferSelect;
 export type CorporateAgreement = typeof corporateAgreements.$inferSelect;
 export type PersonalSignature = typeof personalSignatures.$inferSelect;

@@ -1,6 +1,12 @@
 import { eq } from "drizzle-orm";
 import type { DbClient } from "../db/client.js";
-import { claDocuments, type ClaDocument } from "../db/schema.js";
+import {
+  claDocuments,
+  claTemplates,
+  claTemplateVersions,
+  repositoryTemplateSettings,
+  type ClaDocument
+} from "../db/schema.js";
 import type { InstallationOctokit } from "../github/app.js";
 import { createId } from "../utils/ids.js";
 import { sha256 } from "../utils/sha.js";
@@ -11,7 +17,7 @@ export type ResolvedCla = {
   title: string;
   body: string;
   versionHash: string;
-  source: "repository" | "default_template";
+  source: "repository" | "default_template" | "managed_template";
 };
 
 export async function resolveClaForRepository(params: {
@@ -23,6 +29,21 @@ export async function resolveClaForRepository(params: {
   ref?: string;
   defaultTemplateName: string;
 }): Promise<ResolvedCla> {
+  const managedTemplate = await loadManagedTemplate({
+    db: params.db,
+    repositoryId: params.repositoryId
+  });
+  if (managedTemplate) {
+    return persistResolvedCla({
+      db: params.db,
+      repositoryId: params.repositoryId,
+      title: managedTemplate.version.title,
+      body: managedTemplate.version.body,
+      source: "managed_template",
+      templateName: managedTemplate.template.name
+    });
+  }
+
   const repoCla = await loadRepoCla({
     octokit: params.octokit,
     owner: params.owner,
@@ -51,6 +72,35 @@ export async function resolveClaForRepository(params: {
     source: "default_template",
     templateName: template.name
   });
+}
+
+async function loadManagedTemplate(params: {
+  db: DbClient;
+  repositoryId: string;
+}) {
+  const settings = await params.db.query.repositoryTemplateSettings.findFirst({
+    where: (table) => eq(table.repositoryId, params.repositoryId)
+  });
+  if (settings?.mode !== "managed" || !settings.claTemplateVersionId) {
+    return null;
+  }
+  const claTemplateVersionId = settings.claTemplateVersionId;
+
+  const version = await params.db.query.claTemplateVersions.findFirst({
+    where: (table) => eq(table.claTemplateVersionId, claTemplateVersionId)
+  });
+  if (!version) {
+    return null;
+  }
+
+  const template = await params.db.query.claTemplates.findFirst({
+    where: (table) => eq(table.claTemplateId, version.claTemplateId)
+  });
+  if (!template || (template.repositoryId && template.repositoryId !== params.repositoryId)) {
+    return null;
+  }
+
+  return { template, version };
 }
 
 async function loadRepoCla(params: {
@@ -98,7 +148,7 @@ async function persistResolvedCla(params: {
   repositoryId: string;
   title: string;
   body: string;
-  source: "repository" | "default_template";
+  source: "repository" | "default_template" | "managed_template";
   templateName?: string;
   path?: string;
   gitSha?: string | null;

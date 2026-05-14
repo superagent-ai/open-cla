@@ -1,10 +1,13 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
 import { z } from "zod";
+
+loadEnv({ path: [".env", "../../.env"] });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
+  ADMIN_WEB_URL: z.string().url().default("http://localhost:3001"),
   DATABASE_URL: z.string().min(1),
   DATABASE_MIGRATION_URL: z.string().min(1).optional(),
   GITHUB_APP_ID: z.coerce.number().int().positive(),

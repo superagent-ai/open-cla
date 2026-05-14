@@ -25,7 +25,7 @@ export async function registerAuthRoutes(
   app.get("/auth/github/start", async (request, reply) => {
     const query = request.query as { returnTo?: string };
     const state = randomBytes(24).toString("hex");
-    const returnTo = sanitizeReturnTo(query.returnTo);
+    const returnTo = sanitizeReturnTo(query.returnTo, params.config.ADMIN_WEB_URL);
     const redirectUrl = new URL("/auth/github/callback", params.config.PUBLIC_APP_URL).toString();
     const { url } = params.oauthApp.getWebFlowAuthorizationUrl({
       state,
@@ -116,10 +116,24 @@ async function fetchGitHubUser(token: string): Promise<GitHubUserResponse> {
   return response.json() as Promise<GitHubUserResponse>;
 }
 
-function sanitizeReturnTo(returnTo: string | undefined): string {
+function sanitizeReturnTo(returnTo: string | undefined, adminWebUrl: string): string {
   if (!returnTo || !returnTo.startsWith("/")) {
-    return "/";
+    return sanitizeAbsoluteReturnTo(returnTo, adminWebUrl);
   }
 
   return returnTo.startsWith("//") ? "/" : returnTo;
+}
+
+function sanitizeAbsoluteReturnTo(returnTo: string | undefined, adminWebUrl: string): string {
+  if (!returnTo) {
+    return "/";
+  }
+
+  try {
+    const candidate = new URL(returnTo);
+    const allowed = new URL(adminWebUrl);
+    return candidate.origin === allowed.origin ? candidate.toString() : "/";
+  } catch {
+    return "/";
+  }
 }
