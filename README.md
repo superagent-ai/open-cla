@@ -1,4 +1,4 @@
-# Superagent CLA
+# OpenCLA
 
 TypeScript GitHub App for enforcing Contributor License Agreement coverage on pull requests.
 
