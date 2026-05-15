@@ -32,9 +32,25 @@ export async function buildServer(dependencies: ServerDependencies = {}): Promis
     }
   });
 
-  app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => {
-    done(null, body);
-  });
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (request, body, done) => {
+      const rawBody = typeof body === "string" ? body : body.toString("utf8");
+      (request as typeof request & { rawBody?: string }).rawBody = rawBody;
+
+      if (!rawBody) {
+        done(null, undefined);
+        return;
+      }
+
+      try {
+        done(null, JSON.parse(rawBody));
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    }
+  );
 
   await app.register(cookie, {
     secret: config.SESSION_SECRET

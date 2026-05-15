@@ -1,10 +1,18 @@
 import type { App } from "@octokit/app";
-import type { PullRequestEvent } from "@octokit/webhooks-types";
+import type {
+  InstallationEvent,
+  InstallationRepositoriesEvent,
+  PullRequestEvent
+} from "@octokit/webhooks-types";
 import type { Webhooks } from "@octokit/webhooks";
 import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "../config.js";
 import type { DbClient } from "../db/client.js";
 import { getInstallationOctokit } from "../github/app.js";
+import {
+  handleInstallationRepositoriesWebhook,
+  handleInstallationWebhook
+} from "../webhooks/installation.js";
 import { handlePullRequestWebhook } from "../webhooks/pullRequest.js";
 
 export async function registerWebhookRoutes(
@@ -17,7 +25,7 @@ export async function registerWebhookRoutes(
   }
 ): Promise<void> {
   app.post("/webhooks/github", async (request, reply) => {
-    const rawBody = typeof request.body === "string" ? request.body : JSON.stringify(request.body);
+    const rawBody = (request as typeof request & { rawBody?: string }).rawBody;
     const event = getHeader(request.headers["x-github-event"]);
     const delivery = getHeader(request.headers["x-github-delivery"]);
     const signature = getHeader(request.headers["x-hub-signature-256"]);
@@ -31,14 +39,10 @@ export async function registerWebhookRoutes(
       return reply.code(401).send({ error: "Invalid GitHub webhook signature" });
     }
 
-    const payload = JSON.parse(rawBody) as { installation?: { id?: number } };
+    const payload = (request.body ?? {}) as { installation?: { id?: number } };
 
     if (event === "ping") {
       return reply.send({ ok: true });
-    }
-
-    if (event !== "pull_request") {
-      return reply.send({ ok: true, ignored: event });
     }
 
     if (!payload.installation?.id) {
@@ -46,6 +50,29 @@ export async function registerWebhookRoutes(
     }
 
     const octokit = await getInstallationOctokit(params.githubApp, payload.installation.id);
+
+    if (event === "installation") {
+      await handleInstallationWebhook({
+        db: params.db,
+        octokit,
+        payload: payload as InstallationEvent
+      });
+      return reply.send({ ok: true });
+    }
+
+    if (event === "installation_repositories") {
+      await handleInstallationRepositoriesWebhook({
+        db: params.db,
+        octokit,
+        payload: payload as InstallationRepositoriesEvent
+      });
+      return reply.send({ ok: true });
+    }
+
+    if (event !== "pull_request") {
+      return reply.send({ ok: true, ignored: event });
+    }
+
     await handlePullRequestWebhook({
       db: params.db,
       octokit,

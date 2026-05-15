@@ -63,7 +63,7 @@ TypeScript monorepo for a GitHub App that enforces Contributor License Agreement
    https://your-ngrok-url.ngrok-free.app/webhooks/github
    ```
 
-   Subscribe to `pull_request` and configure repository permissions:
+   Subscribe to `pull_request`, `installation`, and `installation_repositories` events, then configure repository permissions:
 
    ```text
    Checks: read/write
