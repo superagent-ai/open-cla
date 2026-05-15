@@ -7,10 +7,12 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { ChangelogSearch } from "@/components/changelog-search";
 import { DocsSearch } from "@/components/docs-search";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchCommand } from "@/components/search-command";
 import { githubLoginUrl } from "@/lib/api-public";
+import type { ChangelogSearchItem } from "@/lib/changelog";
 import type { DocSearchItem } from "@/lib/docs";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +22,12 @@ type DashboardShellProps = {
   children: ReactNode;
   /** When set, the header uses documentation search instead of the repo/template command palette. */
   docsSearchItems?: DocSearchItem[];
+  /** When set, the header uses changelog search instead of the repo/template command palette. */
+  changelogSearchItems?: ChangelogSearchItem[];
+  /**
+   * Use the same header layout as docs (spacing, no repo command palette) but omit docs search — e.g. `/changelog`.
+   */
+  docsHeaderWithoutSearch?: boolean;
   /** Override the default content wrapper (max width + padding). Use for full-width layouts like `/docs`. */
   contentClassName?: string;
 };
@@ -29,12 +37,14 @@ export function DashboardShell({
   user,
   children,
   docsSearchItems,
+  changelogSearchItems,
+  docsHeaderWithoutSearch,
   contentClassName
 }: DashboardShellProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { theme, setTheme } = useTheme();
-  const docsMode = docsSearchItems !== undefined;
+  const docsLikeHeader = docsSearchItems !== undefined || changelogSearchItems !== undefined || docsHeaderWithoutSearch === true;
   const loginReturnTo = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
   const [themeMounted, setThemeMounted] = useState(false);
   const [pending, setPending] = useState(false);
@@ -45,7 +55,7 @@ export function DashboardShell({
   }, []);
 
   useEffect(() => {
-    if (docsMode) {
+    if (docsLikeHeader) {
       return;
     }
     function onKeyDown(event: KeyboardEvent) {
@@ -58,7 +68,7 @@ export function DashboardShell({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [docsMode]);
+  }, [docsLikeHeader]);
 
   const currentTheme = themeMounted ? theme : undefined;
 
@@ -81,7 +91,7 @@ export function DashboardShell({
         <div
           className={cn(
             "mx-auto flex max-w-[1536px] items-center gap-6 px-8",
-            docsMode ? "min-h-16 flex-wrap py-2 md:h-16 md:flex-nowrap md:py-0" : "h-16"
+            docsLikeHeader ? "min-h-16 flex-wrap py-2 md:h-16 md:flex-nowrap md:py-0" : "h-16"
           )}
         >
           <div className="flex flex-1 items-center gap-8">
@@ -126,8 +136,12 @@ export function DashboardShell({
             </nav>
           </div>
 
-          {docsMode ? (
+          {docsSearchItems ? (
             <DocsSearch docs={docsSearchItems} />
+          ) : changelogSearchItems ? (
+            <ChangelogSearch entries={changelogSearchItems} />
+          ) : docsHeaderWithoutSearch ? (
+            <div className="hidden min-w-0 flex-1 md:block" aria-hidden="true" />
           ) : (
             <button
               aria-label="Open search"
@@ -261,7 +275,7 @@ export function DashboardShell({
             )}
           </div>
         </div>
-        {!docsMode ? (
+        {!docsLikeHeader ? (
           <div className="border-t border-border px-4 py-2 md:hidden">
             <button
               aria-label="Open search"
@@ -285,7 +299,7 @@ export function DashboardShell({
         {children}
       </div>
 
-      {docsMode ? null : (
+      {docsLikeHeader ? null : (
         <SearchCommand apiBaseUrl={apiBaseUrl} open={searchOpen} onOpenChange={setSearchOpen} />
       )}
     </main>
