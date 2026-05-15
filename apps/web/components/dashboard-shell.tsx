@@ -1,32 +1,41 @@
 "use client";
 
 import type { AdminUser } from "@superagent-cla/shared";
-import {
-  CircleHelp,
-  Monitor,
-  Moon,
-  Search,
-  Sun,
-  UserCircle
-} from "lucide-react";
+import { Monitor, Moon, Search, Sun, UserCircle } from "lucide-react";
 import { useTheme } from "next-themes";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { DocsSearch } from "@/components/docs-search";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchCommand } from "@/components/search-command";
+import { githubLoginUrl } from "@/lib/api-public";
+import type { DocSearchItem } from "@/lib/docs";
 import { cn } from "@/lib/utils";
 
 type DashboardShellProps = {
   apiBaseUrl: string;
-  user: AdminUser;
+  user: AdminUser | null;
   children: ReactNode;
+  /** When set, the header uses documentation search instead of the repo/template command palette. */
+  docsSearchItems?: DocSearchItem[];
+  /** Override the default content wrapper (max width + padding). Use for full-width layouts like `/docs`. */
+  contentClassName?: string;
 };
 
-export function DashboardShell({ apiBaseUrl, user, children }: DashboardShellProps) {
+export function DashboardShell({
+  apiBaseUrl,
+  user,
+  children,
+  docsSearchItems,
+  contentClassName
+}: DashboardShellProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { theme, setTheme } = useTheme();
+  const docsMode = docsSearchItems !== undefined;
+  const loginReturnTo = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
   const [themeMounted, setThemeMounted] = useState(false);
   const [pending, setPending] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -36,6 +45,9 @@ export function DashboardShell({ apiBaseUrl, user, children }: DashboardShellPro
   }, []);
 
   useEffect(() => {
+    if (docsMode) {
+      return;
+    }
     function onKeyDown(event: KeyboardEvent) {
       const isShortcut = event.key === "k" && (event.metaKey || event.ctrlKey);
       if (!isShortcut) {
@@ -46,7 +58,7 @@ export function DashboardShell({ apiBaseUrl, user, children }: DashboardShellPro
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [docsMode]);
 
   const currentTheme = themeMounted ? theme : undefined;
 
@@ -66,7 +78,12 @@ export function DashboardShell({ apiBaseUrl, user, children }: DashboardShellPro
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-        <div className="mx-auto flex h-16 max-w-[1536px] items-center gap-6 px-8">
+        <div
+          className={cn(
+            "mx-auto flex max-w-[1536px] items-center gap-6 px-8",
+            docsMode ? "min-h-16 flex-wrap py-2 md:h-16 md:flex-nowrap md:py-0" : "h-16"
+          )}
+        >
           <div className="flex flex-1 items-center gap-8">
             <a href="/" className="flex items-center">
               <img src="/images/logo.webp" alt="OpenCLA" className="h-8 w-auto object-contain" />
@@ -94,56 +111,67 @@ export function DashboardShell({ apiBaseUrl, user, children }: DashboardShellPro
               >
                 Templates
               </a>
+              <a
+                aria-current={pathname === "/docs" || pathname.startsWith("/docs") ? "page" : undefined}
+                className={cn(
+                  "font-medium transition-colors",
+                  pathname === "/docs" || pathname.startsWith("/docs")
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                href="/docs"
+              >
+                Docs
+              </a>
             </nav>
           </div>
 
-          <button
-            aria-label="Open search"
-            className="relative hidden h-10 w-full max-w-md items-center gap-2 rounded-full bg-secondary px-4 text-sm text-muted-foreground transition-colors hover:text-foreground md:flex"
-            onClick={() => setSearchOpen(true)}
-            type="button"
-          >
-            <Search className="h-4 w-4" />
-            <span>Search repos, templates, users...</span>
-            <span className="ml-auto inline-flex items-center gap-1 rounded-md bg-background/70 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-              <span aria-hidden="true">⌘</span>K
-            </span>
-          </button>
-
-          <div className="flex flex-1 items-center justify-end gap-4">
+          {docsMode ? (
+            <DocsSearch docs={docsSearchItems} />
+          ) : (
             <button
-              className="hidden text-muted-foreground hover:text-foreground md:block"
+              aria-label="Open search"
+              className="relative hidden h-10 w-full max-w-md items-center gap-2 rounded-full bg-secondary px-4 text-sm text-muted-foreground transition-colors hover:text-foreground md:flex"
+              onClick={() => setSearchOpen(true)}
               type="button"
             >
-              <CircleHelp className="h-5 w-5" />
+              <Search className="h-4 w-4" />
+              <span>Search repos, templates, users...</span>
+              <span className="ml-auto inline-flex items-center gap-1 rounded-md bg-background/70 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <span aria-hidden="true">⌘</span>K
+              </span>
             </button>
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  aria-label="Open account menu"
-                  className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-secondary"
-                  disabled={pending}
-                  type="button"
+          )}
+
+          <div className="flex flex-1 items-center justify-end gap-4">
+            {user ? (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    aria-label="Open account menu"
+                    className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-secondary"
+                    disabled={pending}
+                    type="button"
+                  >
+                    {user.avatarUrl ? (
+                      <img
+                        src={user.avatarUrl}
+                        alt={user.login}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <UserCircle className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  className="block w-52 gap-0 p-0 [&>*]:m-0"
                 >
-                  {user.avatarUrl ? (
-                    <img
-                      src={user.avatarUrl}
-                      alt={user.login}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <UserCircle className="h-4 w-4 text-muted-foreground" />
-                  )}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="end"
-                className="block w-52 gap-0 p-0 [&>*]:m-0"
-              >
-                <div className="px-4 pb-3 pt-4">
-                  <p className="text-sm font-medium leading-tight text-foreground">@{user.login}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">GitHub account</p>
-                </div>
+                  <div className="px-4 pb-3 pt-4">
+                    <p className="text-sm font-medium leading-tight text-foreground">@{user.login}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">GitHub account</p>
+                  </div>
                 <div className="h-px bg-border" />
                 <div className="flex items-center justify-between px-4 py-3 text-sm text-foreground">
                   <span>Theme</span>
@@ -200,12 +228,12 @@ export function DashboardShell({ apiBaseUrl, user, children }: DashboardShellPro
                   Changelog
                 </Link>
                 <div className="h-px bg-border" />
-                <button
-                  className="flex w-full items-center px-4 py-3 text-left text-sm hover:bg-accent hover:text-accent-foreground"
-                  type="button"
+                <Link
+                  className="flex w-full items-center px-4 py-3 text-sm text-foreground hover:bg-accent hover:text-accent-foreground"
+                  href="/docs"
                 >
-                  Support
-                </button>
+                  Documentation
+                </Link>
                 <div className="h-px bg-border" />
                 <button
                   className="flex w-full items-center px-4 py-3 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
@@ -223,24 +251,43 @@ export function DashboardShell({ apiBaseUrl, user, children }: DashboardShellPro
                 </div>
               </PopoverContent>
             </Popover>
+            ) : (
+              <Link
+                href={githubLoginUrl(loginReturnTo)}
+                className="inline-flex h-9 items-center justify-center rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted/80"
+              >
+                Login
+              </Link>
+            )}
           </div>
         </div>
-        <div className="border-t border-border px-4 py-2 md:hidden">
-          <button
-            aria-label="Open search"
-            className="flex h-9 w-full items-center gap-2 rounded-full bg-secondary px-4 text-sm text-muted-foreground"
-            onClick={() => setSearchOpen(true)}
-            type="button"
-          >
-            <Search className="h-4 w-4" />
-            <span>Search...</span>
-          </button>
-        </div>
+        {!docsMode ? (
+          <div className="border-t border-border px-4 py-2 md:hidden">
+            <button
+              aria-label="Open search"
+              className="flex h-9 w-full items-center gap-2 rounded-full bg-secondary px-4 text-sm text-muted-foreground"
+              onClick={() => setSearchOpen(true)}
+              type="button"
+            >
+              <Search className="h-4 w-4" />
+              <span>Search...</span>
+            </button>
+          </div>
+        ) : null}
       </header>
 
-      <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 pb-16 pt-16">{children}</div>
+      <div
+        className={
+          contentClassName ??
+          "mx-auto flex max-w-6xl flex-col gap-8 px-6 pb-16 pt-16"
+        }
+      >
+        {children}
+      </div>
 
-      <SearchCommand apiBaseUrl={apiBaseUrl} open={searchOpen} onOpenChange={setSearchOpen} />
+      {docsMode ? null : (
+        <SearchCommand apiBaseUrl={apiBaseUrl} open={searchOpen} onOpenChange={setSearchOpen} />
+      )}
     </main>
   );
 }
