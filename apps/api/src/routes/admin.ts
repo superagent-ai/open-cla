@@ -1,9 +1,12 @@
 import type { App } from "@octokit/app";
 import {
+  CreateGlobalTemplateRequestSchema,
   CreateTemplateRequestSchema,
   SelectTemplateRequestSchema,
+  UpdateGlobalTemplateRequestSchema,
   type AdminInstallation,
   type AdminRepository,
+  type GlobalTemplateSummary,
   type PullRequestCoverage,
   type RepositoryTemplateSettings,
   type SignatureRecord,
@@ -23,11 +26,11 @@ import {
   pullRequestChecks,
   repositories,
   repositoryTemplateSettings,
+  type ClaDocument,
   type ClaTemplate,
   type ClaTemplateVersion
 } from "../db/schema.js";
 import { getDefaultTemplate } from "../cla/templates.js";
-import { getInstallationOctokit } from "../github/app.js";
 import { createId } from "../utils/ids.js";
 import { sha256 } from "../utils/sha.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
@@ -69,19 +72,12 @@ export async function registerAdminRoutes(
       params.db.query.repositories.findMany()
     ]);
 
-    const installableRepositories: AdminRepository[] = [];
-    for (const repository of allRepositories) {
-      const adminPermission = await canAdminRepository({
-        githubApp: params.githubApp,
-        repository,
-        login: session.user.login
-      });
-      if (!adminPermission) {
-        continue;
-      }
-
-      installableRepositories.push(toAdminRepository(repository, true));
-    }
+    const installableRepositories = await Promise.all(
+      allRepositories.map(async (repository) => {
+        const stats = await getRepositoryStats(params.db, repository.repositoryId);
+        return toAdminRepository(repository, true, stats);
+      })
+    );
 
     const repositoriesByInstallation = new Map<string, AdminRepository[]>();
     for (const repository of installableRepositories) {
@@ -184,6 +180,201 @@ export async function registerAdminRoutes(
     });
   });
 
+  app.get("/api/admin/templates", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    await ensureDefaultTemplate(params.db, params.config.DEFAULT_CLA_TEMPLATE_NAME);
+
+    const allTemplates = await params.db.query.claTemplates.findMany({
+      where: (table, { and, eq, isNull, or }) =>
+        and(
+          isNull(table.repositoryId),
+          or(
+            eq(table.source, "default"),
+            and(
+              eq(table.source, "uploaded"),
+              eq(table.createdByGithubUserId, session.user.githubUserId)
+            )
+          )
+        )
+    });
+
+    const summaries: GlobalTemplateSummary[] = await Promise.all(
+      allTemplates.map(async (template) => {
+        const summary = await toTemplateSummary(params.db, template);
+        return {
+          ...summary,
+          createdByLogin: template.createdByLogin,
+          createdAt: template.createdAt.toISOString(),
+          isMine: template.createdByGithubUserId === session.user.githubUserId
+        };
+      })
+    );
+
+    summaries.sort((left, right) => {
+      if (left.source !== right.source) {
+        return left.source === "default" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+
+    return { templates: summaries };
+  });
+
+  app.get("/api/admin/users", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    const users = await params.db.query.githubUsers.findMany();
+    const personalSignaturesAll = await params.db.query.personalSignatures.findMany();
+
+    const counts = new Map<string, number>();
+    for (const row of personalSignaturesAll) {
+      counts.set(row.githubUserId, (counts.get(row.githubUserId) ?? 0) + 1);
+    }
+
+    const summarized = users
+      .map((user) => ({
+        githubUserId: user.githubUserId,
+        login: user.login,
+        avatarUrl: user.avatarUrl,
+        signatureCount: counts.get(user.githubUserId) ?? 0
+      }))
+      .sort((left, right) => left.login.localeCompare(right.login));
+
+    return { users: summarized };
+  });
+
+  app.get("/api/admin/templates/:templateId", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    const { templateId } = request.params as { templateId: string };
+    const template = await params.db.query.claTemplates.findFirst({
+      where: (table) => eq(table.claTemplateId, templateId)
+    });
+    if (!template || template.repositoryId !== null) {
+      return reply.code(404).send({ error: "Template not found" });
+    }
+
+    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
+      return reply.code(403).send({ error: "Template not editable" });
+    }
+
+    const summary = await toTemplateSummary(params.db, template);
+    return {
+      template: {
+        ...summary,
+        createdByLogin: template.createdByLogin,
+        createdAt: template.createdAt.toISOString(),
+        isMine: true
+      },
+      body: summary.latestVersion?.body ?? ""
+    };
+  });
+
+  app.put("/api/admin/templates/:templateId", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    const { templateId } = request.params as { templateId: string };
+    const body = UpdateGlobalTemplateRequestSchema.parse(request.body);
+
+    const template = await params.db.query.claTemplates.findFirst({
+      where: (table) => eq(table.claTemplateId, templateId)
+    });
+    if (!template || template.repositoryId !== null) {
+      return reply.code(404).send({ error: "Template not found" });
+    }
+    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
+      return reply.code(403).send({ error: "Template not editable" });
+    }
+
+    await params.db
+      .update(claTemplates)
+      .set({
+        name: body.name,
+        description: body.description ?? null,
+        updatedAt: new Date()
+      })
+      .where(eq(claTemplates.claTemplateId, template.claTemplateId));
+
+    const versionHash = sha256(body.body);
+    const existingVersion = await params.db.query.claTemplateVersions.findFirst({
+      where: (table) =>
+        and(
+          eq(table.claTemplateId, template.claTemplateId),
+          eq(table.versionHash, versionHash)
+        )
+    });
+
+    let newVersionId: string | null = null;
+    if (!existingVersion) {
+      const versionId = createId("tmplver");
+      await params.db.insert(claTemplateVersions).values({
+        claTemplateVersionId: versionId,
+        claTemplateId: template.claTemplateId,
+        title: body.title,
+        body: body.body,
+        versionHash,
+        createdByGithubUserId: session.user.githubUserId,
+        createdByLogin: session.user.login
+      });
+      newVersionId = versionId;
+    }
+
+    return reply.send({
+      ok: true,
+      templateId: template.claTemplateId,
+      versionId: newVersionId ?? existingVersion?.claTemplateVersionId ?? null,
+      versionHash
+    });
+  });
+
+  app.post("/api/admin/templates/global", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    const body = CreateGlobalTemplateRequestSchema.parse(request.body);
+
+    const templateId = createId("tmpl");
+    const templateVersionId = createId("tmplver");
+    const versionHash = sha256(body.body);
+
+    await params.db.insert(claTemplates).values({
+      claTemplateId: templateId,
+      repositoryId: null,
+      source: "uploaded",
+      name: body.name,
+      description: body.description ?? null,
+      createdByGithubUserId: session.user.githubUserId,
+      createdByLogin: session.user.login
+    });
+
+    await params.db.insert(claTemplateVersions).values({
+      claTemplateVersionId: templateVersionId,
+      claTemplateId: templateId,
+      title: body.title,
+      body: body.body,
+      versionHash,
+      createdByGithubUserId: session.user.githubUserId,
+      createdByLogin: session.user.login
+    });
+
+    return reply.code(201).send({ ok: true, templateId });
+  });
+
   app.put("/api/admin/repositories/:repositoryId/template-selection", async (request, reply) => {
     const { repositoryId } = request.params as { repositoryId: string };
     const body = SelectTemplateRequestSchema.parse({
@@ -248,7 +439,6 @@ async function requireSession(
 async function requireAdminRepository(
   params: {
     db: DbClient;
-    githubApp: App;
   },
   request: FastifyRequest,
   reply: FastifyReply,
@@ -267,46 +457,7 @@ async function requireAdminRepository(
     return null;
   }
 
-  const adminPermission = await canAdminRepository({
-    githubApp: params.githubApp,
-    repository,
-    login: session.user.login
-  });
-  if (!adminPermission) {
-    reply.code(403).send({ error: "Repository admin access required" });
-    return null;
-  }
-
   return { session, repository };
-}
-
-async function canAdminRepository(params: {
-  githubApp: App;
-  repository: typeof repositories.$inferSelect;
-  login: string;
-}): Promise<boolean> {
-  try {
-    const octokit = await getInstallationOctokit(
-      params.githubApp,
-      params.repository.installationId
-    );
-    const response = await octokit.request<{ permission: string }>(
-      "GET /repos/{owner}/{repo}/collaborators/{username}/permission",
-      {
-        owner: params.repository.owner,
-        repo: params.repository.name,
-        username: params.login
-      }
-    );
-
-    return response.data.permission === "admin";
-  } catch (error) {
-    if (isNotFoundError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
 }
 
 async function listTemplatesForRepository(
@@ -317,11 +468,17 @@ async function listTemplatesForRepository(
   }
 ): Promise<TemplateSummary[]> {
   const defaultTemplate = await ensureDefaultTemplate(db, params.defaultTemplateName);
-  const uploadedTemplates = await db.query.claTemplates.findMany({
-    where: (table) => eq(table.repositoryId, params.repositoryId)
-  });
+  const [perRepoTemplates, globalCustomTemplates] = await Promise.all([
+    db.query.claTemplates.findMany({
+      where: (table) => eq(table.repositoryId, params.repositoryId)
+    }),
+    db.query.claTemplates.findMany({
+      where: (table, { and, eq: equals, isNull }) =>
+        and(isNull(table.repositoryId), equals(table.source, "uploaded"))
+    })
+  ]);
 
-  const templates = [defaultTemplate, ...uploadedTemplates];
+  const templates = [defaultTemplate, ...globalCustomTemplates, ...perRepoTemplates];
   return Promise.all(templates.map((template) => toTemplateSummary(db, template)));
 }
 
@@ -390,6 +547,7 @@ async function toTemplateSummary(
     name: template.name,
     description: template.description,
     source: template.source,
+    repositoryId: template.repositoryId ?? null,
     latestVersion: latestVersion ? toTemplateVersion(latestVersion) : null
   };
 }
@@ -502,6 +660,7 @@ async function listSignatureRecords(
   const documents = await db.query.claDocuments.findMany({
     where: (table) => eq(table.repositoryId, repositoryId)
   });
+  const documentsById = new Map(documents.map((document) => [document.claDocumentId, document]));
   const documentIds = documents.map((document) => document.claDocumentId);
 
   const [personalRows, corporateRows, checkRows] = await Promise.all([
@@ -522,24 +681,34 @@ async function listSignatureRecords(
 
   return {
     signatures: [
-      ...personalRows.map((row) => ({
-        kind: "personal" as const,
-        signerLogin: row.signerLogin,
-        githubUserId: row.githubUserId,
-        organizationLogin: null,
-        claVersionHash: row.claVersionHash,
-        signedAt: row.signedAt.toISOString(),
-        revokedAt: row.revokedAt?.toISOString() ?? null
-      })),
-      ...corporateRows.map((row) => ({
-        kind: "corporate" as const,
-        signerLogin: row.authorizedSignerLogin,
-        githubUserId: row.authorizedSignerUserId,
-        organizationLogin: row.orgLogin,
-        claVersionHash: row.claVersionHash,
-        signedAt: row.effectiveFrom.toISOString(),
-        revokedAt: row.effectiveUntil?.toISOString() ?? null
-      }))
+      ...personalRows.map((row) => {
+        const ctx = signatureDocumentContext(documentsById, row.claDocumentId);
+        return {
+          kind: "personal" as const,
+          signerLogin: row.signerLogin,
+          githubUserId: row.githubUserId,
+          organizationLogin: null,
+          claVersionHash: row.claVersionHash,
+          signedAt: row.signedAt.toISOString(),
+          revokedAt: row.revokedAt?.toISOString() ?? null,
+          documentSource: ctx.documentSource,
+          documentLabel: ctx.documentLabel
+        };
+      }),
+      ...corporateRows.map((row) => {
+        const ctx = signatureDocumentContext(documentsById, row.claDocumentId);
+        return {
+          kind: "corporate" as const,
+          signerLogin: row.authorizedSignerLogin,
+          githubUserId: row.authorizedSignerUserId,
+          organizationLogin: row.orgLogin,
+          claVersionHash: row.claVersionHash,
+          signedAt: row.effectiveFrom.toISOString(),
+          revokedAt: row.effectiveUntil?.toISOString() ?? null,
+          documentSource: ctx.documentSource,
+          documentLabel: ctx.documentLabel
+        };
+      })
     ],
     pullRequestChecks: checkRows.map((row) => ({
       repositoryId: row.repositoryId,
@@ -553,9 +722,37 @@ async function listSignatureRecords(
   };
 }
 
+function signatureDocumentContext(
+  documentsById: Map<string, ClaDocument>,
+  claDocumentId: string
+): { documentSource: SignatureRecord["documentSource"]; documentLabel: string } {
+  const document = documentsById.get(claDocumentId);
+  if (!document) {
+    return {
+      documentSource: "managed_template",
+      documentLabel: "Unknown agreement document"
+    };
+  }
+
+  if (document.source === "repository") {
+    return { documentSource: "repository", documentLabel: document.path ?? "CLA.md" };
+  }
+  if (document.source === "default_template") {
+    return {
+      documentSource: "default_template",
+      documentLabel: document.templateName ?? "Platform default (fallback)"
+    };
+  }
+  return {
+    documentSource: "managed_template",
+    documentLabel: document.templateName ?? "Managed template"
+  };
+}
+
 function toAdminRepository(
   repository: typeof repositories.$inferSelect,
-  adminPermission: boolean
+  adminPermission: boolean,
+  stats?: AdminRepository["stats"]
 ): AdminRepository {
   return {
     repositoryId: repository.repositoryId,
@@ -565,7 +762,68 @@ function toAdminRepository(
     fullName: repository.fullName,
     private: repository.private,
     defaultBranch: repository.defaultBranch,
-    adminPermission
+    adminPermission,
+    stats: stats ?? null
+  };
+}
+
+async function getRepositoryStats(
+  db: DbClient,
+  repositoryId: string
+): Promise<NonNullable<AdminRepository["stats"]>> {
+  const settings = await db.query.repositoryTemplateSettings.findFirst({
+    where: (table) => eq(table.repositoryId, repositoryId)
+  });
+
+  let selectedTemplateName: string | null = null;
+  if (settings?.mode === "managed" && settings.claTemplateVersionId) {
+    const version = await db.query.claTemplateVersions.findFirst({
+      where: (table) => eq(table.claTemplateVersionId, settings.claTemplateVersionId!)
+    });
+    if (version) {
+      const template = await db.query.claTemplates.findFirst({
+        where: (table) => eq(table.claTemplateId, version.claTemplateId)
+      });
+      selectedTemplateName = template?.name ?? null;
+    }
+  }
+
+  const documents = await db.query.claDocuments.findMany({
+    where: (table) => eq(table.repositoryId, repositoryId)
+  });
+  const documentIds = documents.map((document) => document.claDocumentId);
+
+  const [personalRows, corporateRows, checkRows] = await Promise.all([
+    documentIds.length
+      ? db.query.personalSignatures.findMany({
+          where: (table) => inArray(table.claDocumentId, documentIds)
+        })
+      : Promise.resolve([]),
+    documentIds.length
+      ? db.query.corporateAgreements.findMany({
+          where: (table) => inArray(table.claDocumentId, documentIds)
+        })
+      : Promise.resolve([]),
+    db.query.pullRequestChecks.findMany({
+      where: (table) => eq(table.repositoryId, repositoryId)
+    })
+  ]);
+
+  const activityDates: Date[] = [];
+  for (const row of personalRows) activityDates.push(row.signedAt);
+  for (const row of corporateRows) activityDates.push(row.effectiveFrom);
+  for (const row of checkRows) activityDates.push(row.updatedAt);
+
+  const lastActivityAt = activityDates.length
+    ? new Date(Math.max(...activityDates.map((date) => date.getTime())))
+    : null;
+
+  return {
+    templateMode: settings?.mode === "managed" ? "managed" : "repository",
+    selectedTemplateName,
+    signatureCount: personalRows.length + corporateRows.length,
+    pullRequestCheckCount: checkRows.length,
+    lastActivityAt: lastActivityAt ? lastActivityAt.toISOString() : null
   };
 }
 
@@ -578,13 +836,4 @@ function compareByCreatedAtDesc(
 
 function normalizeAccountType(accountType: string): "Organization" | "User" {
   return accountType === "User" ? "User" : "Organization";
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    Number((error as { status?: unknown }).status) === 404
-  );
 }

@@ -2,32 +2,18 @@
 
 import type {
   AdminInstallation,
+  AdminRepository,
   AdminUser,
   SignaturesResponse,
   TemplatesResponse
 } from "@superagent-cla/shared";
-import { CheckCircle2, FileText, Upload, UserCircle } from "lucide-react";
+import { Lock } from "lucide-react";
+import { ditherAvatarDataUri } from "dither-avatar";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
+import { useMemo, useState } from "react";
+
+import { DashboardShell } from "@/components/dashboard-shell";
+import { RepositoryDetailPanel } from "@/components/repository-detail-panel";
 
 type AdminDashboardProps = {
   apiBaseUrl: string;
@@ -63,289 +49,106 @@ export function AdminDashboard({
     setPending(true);
     setError(null);
     try {
-      await fetch(
-        `${apiBaseUrl}/api/admin/repositories/${selectedRepositoryId}/template-selection`,
-        {
-          method: "PUT",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ repositoryId: selectedRepositoryId, templateVersionId })
-        }
-      ).then(assertOk);
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to select template");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function uploadTemplate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedRepositoryId) {
-      return;
-    }
-
-    const form = new FormData(event.currentTarget);
-    setPending(true);
-    setError(null);
-    try {
-      await fetch(`${apiBaseUrl}/api/admin/templates`, {
-        method: "POST",
+      await fetch(`/api/admin/repositories/${selectedRepositoryId}/template-selection`, {
+        method: "PUT",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          repositoryId: selectedRepositoryId,
-          name: String(form.get("name") ?? ""),
-          description: String(form.get("description") ?? ""),
-          title: String(form.get("title") ?? ""),
-          body: String(form.get("body") ?? "")
-        })
+        body: JSON.stringify({ repositoryId: selectedRepositoryId, templateVersionId })
       }).then(assertOk);
-      event.currentTarget.reset();
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to upload template");
+      const message = caught instanceof Error ? caught.message : "Unable to select template";
+      setError(message);
     } finally {
-      setPending(false);
-    }
-  }
-
-  async function logout() {
-    setPending(true);
-    setError(null);
-    try {
-      await fetch(`${apiBaseUrl}/auth/logout`, {
-        method: "POST",
-        credentials: "include"
-      }).then(assertOk);
-      window.location.href = "/";
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to log out");
       setPending(false);
     }
   }
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-500">OpenCLA</p>
-            <h1 className="text-3xl font-semibold tracking-tight">Admin Console</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-3 rounded-full border bg-white px-4 py-2 text-sm">
-              <UserCircle className="h-4 w-4" />
-              <span>@{user.login}</span>
-            </div>
-            <Button disabled={pending} onClick={() => void logout()} variant="outline">
-              Log out
-            </Button>
-          </div>
-        </header>
+    <DashboardShell apiBaseUrl={apiBaseUrl} user={user}>
+      {error ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
 
-        {error ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        ) : null}
-
-        <section className="grid gap-6 lg:grid-cols-[320px_1fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>Repositories</CardTitle>
-              <CardDescription>Select the account/repository context to manage.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {repositories.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  No installed repositories where your GitHub user has admin access were found.
-                </p>
-              ) : (
-                repositories.map((repository) => (
-                  <Button
-                    key={repository.repositoryId}
-                    className="w-full justify-start"
-                    variant={repository.repositoryId === selectedRepositoryId ? "default" : "outline"}
-                    onClick={() => router.push(`/?repositoryId=${repository.repositoryId}`)}
-                  >
-                    {repository.fullName}
-                  </Button>
-                ))
-              )}
-            </CardContent>
-          </Card>
-
-          {!selectedRepositoryId || !templatesResponse ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Choose A Repository</CardTitle>
-                <CardDescription>
-                  Template selection and signature visibility are always scoped to a repository.
-                </CardDescription>
-              </CardHeader>
-            </Card>
+      {!selectedRepositoryId || !templatesResponse ? (
+        <section className="space-y-6">
+          {repositories.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No installed repositories where you have admin access.
+            </p>
           ) : (
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="h-5 w-5" />
-                    Templates For {templatesResponse.repository.fullName}
-                  </CardTitle>
-                  <CardDescription>
-                    Current mode:{" "}
-                    <Badge variant="secondary">{templatesResponse.settings.mode}</Badge>
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Button
-                    variant="outline"
-                    disabled={pending}
-                    onClick={() => void selectTemplate(null)}
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {repositories.map((repository) => (
+                <button
+                  key={repository.repositoryId}
+                  type="button"
+                  onClick={() => router.push(`/?repositoryId=${repository.repositoryId}`)}
+                  className="group flex cursor-pointer flex-col gap-3 rounded-2xl text-left transition-transform hover:-translate-y-0.5"
+                >
+                  <div
+                    className="relative aspect-[16/9] overflow-hidden rounded-2xl bg-muted"
+                    style={{
+                      backgroundImage: `url("${ditherAvatarDataUri(repository.fullName)}")`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center"
+                    }}
                   >
-                    Use repository CLA.md fallback
-                  </Button>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {templatesResponse.templates.map((template) => (
-                      <div key={template.templateId} className="rounded-lg border p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <h3 className="font-medium">{template.name}</h3>
-                            <p className="text-sm text-slate-500">
-                              {template.description ?? "No description"}
-                            </p>
-                          </div>
-                          <Badge variant={template.source === "default" ? "secondary" : "outline"}>
-                            {template.source}
-                          </Badge>
-                        </div>
-                        {template.latestVersion ? (
-                          <div className="mt-4 space-y-3">
-                            <p className="text-xs text-slate-500">
-                              Hash {template.latestVersion.versionHash.slice(0, 12)}
-                            </p>
-                            <Button
-                              size="sm"
-                              disabled={pending}
-                              onClick={() =>
-                                void selectTemplate(template.latestVersion!.templateVersionId)
-                              }
-                            >
-                              <CheckCircle2 className="h-4 w-4" />
-                              Select Version
-                            </Button>
-                          </div>
-                        ) : (
-                          <p className="mt-4 text-sm text-slate-500">No versions yet.</p>
-                        )}
-                      </div>
-                    ))}
+                    <span className="absolute left-3 top-3 z-10 inline-flex items-center gap-1 rounded-full bg-background/95 px-2.5 py-1 text-xs font-medium text-foreground shadow-sm ring-1 ring-foreground/5">
+                      {repository.private ? (
+                        <>
+                          <Lock className="h-3 w-3" />
+                          Private
+                        </>
+                      ) : (
+                        "Public"
+                      )}
+                    </span>
                   </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Upload className="h-5 w-5" />
-                    Upload Template
-                  </CardTitle>
-                  <CardDescription>
-                    Uploaded text becomes an immutable version and is selected for this repository.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form className="grid gap-4" onSubmit={(event) => void uploadTemplate(event)}>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium" htmlFor="name">
-                        Template name
-                      </label>
-                      <Input id="name" name="name" required />
+                  <div className="flex items-start gap-3 px-1">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-sm font-semibold uppercase">
+                      {repository.owner.slice(0, 1)}
                     </div>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium" htmlFor="description">
-                        Description
-                      </label>
-                      <Input id="description" name="description" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">{repository.fullName}</p>
+                      <p className="truncate text-xs text-muted-foreground">{describeRepositoryStats(repository)}</p>
                     </div>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium" htmlFor="title">
-                        Signing page title
-                      </label>
-                      <Input id="title" name="title" required />
-                    </div>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium" htmlFor="body">
-                        Template body
-                      </label>
-                      <Textarea id="body" name="body" required />
-                    </div>
-                    <Button className="w-fit" disabled={pending} type="submit">
-                      Upload and select
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-
-              {signaturesResponse ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Signatures And Checks</CardTitle>
-                    <CardDescription>See who has signed and recent CLA check outcomes.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Signer</TableHead>
-                          <TableHead>Kind</TableHead>
-                          <TableHead>Organization</TableHead>
-                          <TableHead>Signed</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {signaturesResponse.signatures.map((signature) => (
-                          <TableRow
-                            key={`${signature.kind}-${signature.signerLogin}-${signature.claVersionHash}`}
-                          >
-                            <TableCell>@{signature.signerLogin}</TableCell>
-                            <TableCell>{signature.kind}</TableCell>
-                            <TableCell>{signature.organizationLogin ?? "-"}</TableCell>
-                            <TableCell>{new Date(signature.signedAt).toLocaleString()}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>PR</TableHead>
-                          <TableHead>Conclusion</TableHead>
-                          <TableHead>Summary</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {signaturesResponse.pullRequestChecks.map((check) => (
-                          <TableRow key={`${check.pullNumber}-${check.headSha}`}>
-                            <TableCell>#{check.pullNumber}</TableCell>
-                            <TableCell>{check.conclusion ?? "pending"}</TableCell>
-                            <TableCell>{check.lastSummary ?? "-"}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              ) : null}
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </section>
-      </div>
-    </main>
+      ) : (
+        <RepositoryDetailPanel
+          pending={pending}
+          signaturesResponse={signaturesResponse}
+          templatesResponse={templatesResponse}
+          onNavigateBack={() => router.push("/")}
+          onSelectTemplate={(templateVersionId) => void selectTemplate(templateVersionId)}
+        />
+      )}
+    </DashboardShell>
   );
+}
+
+function describeRepositoryStats(repository: AdminRepository): string {
+  const stats = repository.stats;
+  if (!stats) {
+    return "No CLA activity yet";
+  }
+
+  const parts: string[] = [];
+  parts.push(`${stats.signatureCount} ${stats.signatureCount === 1 ? "signature" : "signatures"}`);
+
+  if (stats.templateMode === "managed" && stats.selectedTemplateName) {
+    parts.push(`template: ${stats.selectedTemplateName}`);
+  } else {
+    parts.push("repository CLA.md");
+  }
+
+  return parts.join(" · ");
 }
 
 async function assertOk(response: Response): Promise<void> {
