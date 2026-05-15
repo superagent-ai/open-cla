@@ -1,9 +1,11 @@
 node_modules
 dist
+.next
 .env
 .DS_Store
 coverage
 *.log
+*.tsbuildinfo
 ngrok
 ngrok.yml
 .ngrok.yml

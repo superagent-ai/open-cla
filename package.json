@@ -2,39 +2,22 @@
   "name": "superagent-cla",
   "version": "1.0.0",
   "description": "GitHub App for Contributor License Agreement checks.",
-  "main": "dist/server.js",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "npm run build -w @superagent-cla/shared && npm run build -w @superagent-cla/api && npm run build -w @superagent-cla/web",
+    "db:generate": "npm run db:generate -w @superagent-cla/api",
+    "db:migrate": "npm run db:migrate -w @superagent-cla/api",
+    "dev:api": "npm run build -w @superagent-cla/shared && npm run dev -w @superagent-cla/api",
+    "dev:web": "npm run build -w @superagent-cla/shared && npm run dev -w @superagent-cla/web",
+    "start:api": "npm run start -w @superagent-cla/api",
+    "test": "npm run build -w @superagent-cla/shared && npm run test -w @superagent-cla/api",
+    "typecheck": "npm run typecheck -w @superagent-cla/shared && npm run typecheck -w @superagent-cla/api && npm run typecheck -w @superagent-cla/web"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "type": "module",
-  "dependencies": {
-    "@fastify/cookie": "^11.0.2",
-    "@fastify/formbody": "^8.0.2",
-    "@octokit/app": "^16.1.2",
-    "@octokit/oauth-app": "^8.0.3",
-    "@octokit/webhooks": "^14.2.0",
-    "@octokit/webhooks-types": "^7.6.1",
-    "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
-    "fastify": "^5.8.5",
-    "pg": "^8.20.0",
-    "zod": "^4.4.3"
-  },
-  "devDependencies": {
-    "@types/node": "^25.7.0",
-    "@types/pg": "^8.20.0",
-    "drizzle-kit": "^0.31.10",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
-  }
+  "license": "ISC"
 }

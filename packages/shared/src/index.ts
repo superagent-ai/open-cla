@@ -1,0 +1,175 @@
+import { z } from "zod";
+
+export const GitHubAccountTypeSchema = z.enum(["Organization", "User"]);
+export type GitHubAccountType = z.infer<typeof GitHubAccountTypeSchema>;
+
+export const AdminUserSchema = z.object({
+  githubUserId: z.string(),
+  login: z.string(),
+  avatarUrl: z.string().nullable()
+});
+export type AdminUser = z.infer<typeof AdminUserSchema>;
+
+export const AdminRepositorySchema = z.object({
+  repositoryId: z.string(),
+  installationId: z.string(),
+  owner: z.string(),
+  name: z.string(),
+  fullName: z.string(),
+  private: z.boolean(),
+  defaultBranch: z.string(),
+  adminPermission: z.boolean(),
+  stats: z
+    .object({
+      templateMode: z.enum(["repository", "managed"]),
+      selectedTemplateName: z.string().nullable(),
+      signatureCount: z.number(),
+      pullRequestCheckCount: z.number(),
+      lastActivityAt: z.string().nullable()
+    })
+    .nullable()
+    .optional()
+});
+export type AdminRepository = z.infer<typeof AdminRepositorySchema>;
+
+export const AdminInstallationSchema = z.object({
+  installationId: z.string(),
+  accountId: z.string(),
+  accountLogin: z.string(),
+  accountType: GitHubAccountTypeSchema,
+  repositories: z.array(AdminRepositorySchema)
+});
+export type AdminInstallation = z.infer<typeof AdminInstallationSchema>;
+
+export const TemplateSourceSchema = z.enum(["default", "uploaded"]);
+export type TemplateSource = z.infer<typeof TemplateSourceSchema>;
+
+export const TemplateVersionSchema = z.object({
+  templateVersionId: z.string(),
+  templateId: z.string(),
+  title: z.string(),
+  versionHash: z.string(),
+  body: z.string(),
+  createdByLogin: z.string().nullable(),
+  createdAt: z.string()
+});
+export type TemplateVersion = z.infer<typeof TemplateVersionSchema>;
+
+export const TemplateSummarySchema = z.object({
+  templateId: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  source: TemplateSourceSchema,
+  repositoryId: z.string().nullable(),
+  latestVersion: TemplateVersionSchema.nullable()
+});
+export type TemplateSummary = z.infer<typeof TemplateSummarySchema>;
+
+export const RepositoryTemplateSettingsSchema = z.object({
+  repositoryId: z.string(),
+  mode: z.enum(["repository", "managed"]),
+  selectedTemplateVersionId: z.string().nullable(),
+  selectedTemplateName: z.string().nullable(),
+  selectedTemplateHash: z.string().nullable(),
+  updatedByLogin: z.string().nullable(),
+  updatedAt: z.string().nullable()
+});
+export type RepositoryTemplateSettings = z.infer<typeof RepositoryTemplateSettingsSchema>;
+
+export const TemplatesResponseSchema = z.object({
+  repository: AdminRepositorySchema,
+  settings: RepositoryTemplateSettingsSchema,
+  templates: z.array(TemplateSummarySchema)
+});
+export type TemplatesResponse = z.infer<typeof TemplatesResponseSchema>;
+
+export const CreateTemplateRequestSchema = z.object({
+  repositoryId: z.string().min(1),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional(),
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1)
+});
+export type CreateTemplateRequest = z.infer<typeof CreateTemplateRequestSchema>;
+
+export const GlobalTemplateSummarySchema = TemplateSummarySchema.extend({
+  createdByLogin: z.string().nullable(),
+  createdAt: z.string(),
+  isMine: z.boolean()
+});
+export type GlobalTemplateSummary = z.infer<typeof GlobalTemplateSummarySchema>;
+
+export const GlobalTemplatesResponseSchema = z.object({
+  templates: z.array(GlobalTemplateSummarySchema)
+});
+export type GlobalTemplatesResponse = z.infer<typeof GlobalTemplatesResponseSchema>;
+
+export const CreateGlobalTemplateRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional(),
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1)
+});
+export type CreateGlobalTemplateRequest = z.infer<typeof CreateGlobalTemplateRequestSchema>;
+
+export const UpdateGlobalTemplateRequestSchema = CreateGlobalTemplateRequestSchema;
+export type UpdateGlobalTemplateRequest = CreateGlobalTemplateRequest;
+
+export const TemplateDetailResponseSchema = z.object({
+  template: GlobalTemplateSummarySchema,
+  body: z.string()
+});
+export type TemplateDetailResponse = z.infer<typeof TemplateDetailResponseSchema>;
+
+export const KnownGitHubUserSchema = z.object({
+  githubUserId: z.string(),
+  login: z.string(),
+  avatarUrl: z.string().nullable(),
+  signatureCount: z.number()
+});
+export type KnownGitHubUser = z.infer<typeof KnownGitHubUserSchema>;
+
+export const KnownUsersResponseSchema = z.object({
+  users: z.array(KnownGitHubUserSchema)
+});
+export type KnownUsersResponse = z.infer<typeof KnownUsersResponseSchema>;
+
+export const SelectTemplateRequestSchema = z.object({
+  repositoryId: z.string().min(1),
+  templateVersionId: z.string().min(1).nullable()
+});
+export type SelectTemplateRequest = z.infer<typeof SelectTemplateRequestSchema>;
+
+export const ClaDocumentSourceSchema = z.enum(["repository", "default_template", "managed_template"]);
+export type ClaDocumentSource = z.infer<typeof ClaDocumentSourceSchema>;
+
+export const SignatureRecordSchema = z.object({
+  kind: z.enum(["personal", "corporate"]),
+  signerLogin: z.string(),
+  githubUserId: z.string().nullable(),
+  organizationLogin: z.string().nullable(),
+  claVersionHash: z.string(),
+  signedAt: z.string(),
+  revokedAt: z.string().nullable(),
+  documentSource: ClaDocumentSourceSchema,
+  documentLabel: z.string()
+});
+export type SignatureRecord = z.infer<typeof SignatureRecordSchema>;
+
+export const PullRequestCoverageSchema = z.object({
+  repositoryId: z.string(),
+  pullNumber: z.number(),
+  headSha: z.string(),
+  conclusion: z.string().nullable(),
+  detailsUrl: z.string().nullable(),
+  lastSummary: z.string().nullable(),
+  updatedAt: z.string()
+});
+export type PullRequestCoverage = z.infer<typeof PullRequestCoverageSchema>;
+
+export const SignaturesResponseSchema = z.object({
+  repository: AdminRepositorySchema,
+  signatures: z.array(SignatureRecordSchema),
+  pullRequestChecks: z.array(PullRequestCoverageSchema)
+});
+export type SignaturesResponse = z.infer<typeof SignaturesResponseSchema>;
