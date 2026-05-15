@@ -148,7 +148,7 @@ export default async function DocsPage({ searchParams }: DocsPageProps) {
         docsSearchItems={searchItems}
         contentClassName="w-full max-w-none px-0 pb-0 pt-0"
       >
-        <div className="mx-auto grid w-full max-w-[1536px] grid-cols-1 px-5 py-10 md:px-8 lg:grid-cols-[260px_minmax(0,1fr)_240px] lg:gap-12">
+        <div className="mx-auto grid w-full max-w-[1364px] grid-cols-1 px-5 py-10 md:px-8 lg:grid-cols-[260px_minmax(0,768px)_240px] lg:justify-center lg:gap-12">
         <aside className="hidden lg:block">
           <nav className="sticky top-24 max-h-[calc(100vh-7rem)] overflow-y-auto pr-4" aria-label="Docs navigation">
             {navSections.map((section) => (
@@ -191,16 +191,16 @@ export default async function DocsPage({ searchParams }: DocsPageProps) {
         </article>
 
         <aside className="hidden lg:block">
-          <nav className="sticky top-24 max-h-[calc(100vh-7rem)] overflow-y-auto pl-4" aria-label="On this page">
-            <p className="mb-2 text-sm font-medium text-foreground">On this page</p>
+          <nav className="sticky top-24 max-h-[calc(100vh-7rem)] overflow-y-auto pl-2" aria-label="On this page">
+            <p className="mb-3 px-2 text-sm font-medium leading-5 text-foreground">On this page</p>
             <div className="flex flex-col gap-1">
               {doc.toc.map((item) => (
                 <a
                   key={item.id}
                   href={`#${item.id}`}
                   className={cn(
-                    "block rounded-md px-1 py-0.5 text-sm leading-tight text-foreground transition-colors hover:bg-muted/60",
-                    item.level === 3 && "pl-4"
+                    "block rounded-md px-2 py-1 text-sm leading-5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
+                    item.level === 3 && "pl-5"
                   )}
                 >
                   {item.title}
