@@ -9,14 +9,7 @@ const DEFAULT_API = "http://localhost:3000";
 export const serverApiBaseUrl =
   process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API;
 
-/**
- * Base URL for browser `fetch` (template selection, Cmd+K search, logout). Must be a host the
- * user's machine can resolve; use `NEXT_PUBLIC_API_BASE_URL` when `API_BASE_URL` is internal-only.
- */
-export const browserApiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.API_BASE_URL ?? DEFAULT_API;
-
-export const webBaseUrl = process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3001";
+export { browserApiBaseUrl, githubLoginUrl, webBaseUrl } from "./api-public";
 
 export class ApiError extends Error {
   constructor(
@@ -41,11 +34,4 @@ export async function adminApiFetch<T>(path: string): Promise<T> {
   }
 
   return response.json() as Promise<T>;
-}
-
-export function githubLoginUrl(returnPath = "/"): string {
-  const returnTo = new URL(returnPath, webBaseUrl).toString();
-  const url = new URL("/auth/github/start", browserApiBaseUrl);
-  url.searchParams.set("returnTo", returnTo);
-  return url.toString();
 }
