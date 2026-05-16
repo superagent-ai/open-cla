@@ -293,7 +293,7 @@ export function DashboardShell({
       <div
         className={
           contentClassName ??
-          "mx-auto flex max-w-6xl flex-col gap-8 px-6 pb-16 pt-16"
+          "mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 pb-16 pt-16"
         }
       >
         {children}
