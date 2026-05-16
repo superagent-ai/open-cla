@@ -46,6 +46,10 @@ export async function createUserSession(params: {
     expiresAt: params.expiresAt
   });
 
+  if (params.cookieDomain) {
+    params.reply.clearCookie(SESSION_COOKIE, { path: "/" });
+  }
+
   params.reply.setCookie(SESSION_COOKIE, sessionId, {
     httpOnly: true,
     path: "/",
@@ -98,8 +102,14 @@ export async function getCurrentSession(
 }
 
 export function clearSession(reply: FastifyReply, cookieDomain?: string): void {
+  reply.clearCookie(SESSION_COOKIE, { path: "/" });
+
+  if (!cookieDomain) {
+    return;
+  }
+
   reply.clearCookie(SESSION_COOKIE, {
     path: "/",
-    ...(cookieDomain ? { domain: cookieDomain } : {})
+    domain: cookieDomain
   });
 }

@@ -34,7 +34,12 @@ export async function registerAuthRoutes(
       scopes: []
     });
 
-    reply
+    if (cookieDomain) {
+      reply.clearCookie(OAUTH_STATE_COOKIE, { path: "/" });
+      reply.clearCookie(OAUTH_RETURN_COOKIE, { path: "/" });
+    }
+
+    return reply
       .setCookie(OAUTH_STATE_COOKIE, state, {
         httpOnly: true,
         path: "/",
@@ -92,16 +97,22 @@ export async function registerAuthRoutes(
     const returnTo =
       unsignedReturn?.valid && unsignedReturn.value ? unsignedReturn.value : "/";
 
-    reply
-      .clearCookie(OAUTH_STATE_COOKIE, {
-        path: "/",
-        ...(params.config.COOKIE_DOMAIN ? { domain: params.config.COOKIE_DOMAIN } : {})
-      })
-      .clearCookie(OAUTH_RETURN_COOKIE, {
-        path: "/",
-        ...(params.config.COOKIE_DOMAIN ? { domain: params.config.COOKIE_DOMAIN } : {})
-      })
-      .redirect(returnTo);
+    reply.clearCookie(OAUTH_STATE_COOKIE, { path: "/" });
+    reply.clearCookie(OAUTH_RETURN_COOKIE, { path: "/" });
+
+    if (params.config.COOKIE_DOMAIN) {
+      reply
+        .clearCookie(OAUTH_STATE_COOKIE, {
+          path: "/",
+          domain: params.config.COOKIE_DOMAIN
+        })
+        .clearCookie(OAUTH_RETURN_COOKIE, {
+          path: "/",
+          domain: params.config.COOKIE_DOMAIN
+        });
+    }
+
+    return reply.redirect(returnTo);
   });
 
   app.post("/auth/logout", async (_request, reply) => {
