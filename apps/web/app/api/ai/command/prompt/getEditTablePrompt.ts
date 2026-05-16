@@ -91,7 +91,7 @@ export function buildEditTableMultiCellPrompt(
 
         <output>
         [
-          { "id": "c1", "content": "Install dependencies\n\n- Run npm install\n- Configure environment" }
+          { "id": "c1", "content": "Install dependencies\n\n- Run pnpm install\n- Configure environment" }
         ]
         </output>
       `,

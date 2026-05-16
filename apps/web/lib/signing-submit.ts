@@ -30,6 +30,11 @@ export async function proxySigningSubmission(
 
   const redirectParams = signingSearchParams(payload);
   if (upstream.ok) {
+    const pullRequestUrl = githubPullRequestUrl(payload);
+    if (pullRequestUrl) {
+      return NextResponse.redirect(pullRequestUrl);
+    }
+
     redirectParams.set("signed", kind);
   } else {
     redirectParams.set("error", await readErrorMessage(upstream));
@@ -68,6 +73,17 @@ function signingSearchParams(payload: Record<string, string>): URLSearchParams {
     }
   }
   return params;
+}
+
+function githubPullRequestUrl(payload: Record<string, string>): string | null {
+  if (!payload.owner || !payload.repo || !payload.pull) {
+    return null;
+  }
+
+  const owner = encodeURIComponent(payload.owner);
+  const repo = encodeURIComponent(payload.repo);
+  const pull = encodeURIComponent(payload.pull);
+  return `https://github.com/${owner}/${repo}/pull/${pull}`;
 }
 
 function stringValue(formData: FormData, name: string): string {

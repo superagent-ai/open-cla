@@ -22,7 +22,7 @@ TypeScript monorepo for a GitHub App that enforces Contributor License Agreement
 1. Install dependencies.
 
    ```sh
-   npm install
+   pnpm install
    ```
 
 2. Copy the API environment template.
@@ -107,14 +107,14 @@ TypeScript monorepo for a GitHub App that enforces Contributor License Agreement
 8. Run migrations.
 
    ```sh
-   npm run db:migrate
+   pnpm run db:migrate
    ```
 
 9. Start both apps in separate terminals.
 
    ```sh
-   npm run dev:api
-   npm run dev:web
+   pnpm run dev:api
+   pnpm run dev:web
    ```
 
 10. Visit the admin UI.
@@ -131,13 +131,13 @@ This keeps multi-account behavior explicit: one GitHub user can manage multiple 
 
 ## Scripts
 
-- `npm run dev:api`: build shared contracts and start the Fastify API on port `3000`.
-- `npm run dev:web`: build shared contracts and start the Next.js admin app on port `3001`.
-- `npm run build`: build shared contracts, API, and web app.
-- `npm run typecheck`: typecheck all workspaces.
-- `npm test`: build shared contracts and run API tests.
-- `npm run db:generate`: generate Drizzle migrations for `apps/api`.
-- `npm run db:migrate`: apply Drizzle migrations for `apps/api`.
+- `pnpm run dev:api`: build shared contracts and start the Fastify API on port `3000`.
+- `pnpm run dev:web`: build shared contracts and start the Next.js admin app on port `3001`.
+- `pnpm build`: build shared contracts, API, and web app.
+- `pnpm typecheck`: typecheck all workspaces.
+- `pnpm test`: build shared contracts and run API tests.
+- `pnpm run db:generate`: generate Drizzle migrations for `apps/api`.
+- `pnpm run db:migrate`: apply Drizzle migrations for `apps/api`.
 
 ## Deployment
 

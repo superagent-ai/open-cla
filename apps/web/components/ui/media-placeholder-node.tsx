@@ -13,7 +13,6 @@ import {
 import { AudioLines, FileUp, Film, ImageIcon, Loader2Icon } from 'lucide-react';
 import { KEYS } from 'platejs';
 import { PlateElement, useEditorPlugin, withHOC } from 'platejs/react';
-import { useFilePicker } from 'use-file-picker';
 
 import { cn } from '@/lib/utils';
 import { useUploadFile } from '@/hooks/use-upload-file';
@@ -21,28 +20,23 @@ import { useUploadFile } from '@/hooks/use-upload-file';
 const CONTENT: Record<
   string,
   {
-    accept: string[];
     content: React.ReactNode;
     icon: React.ReactNode;
   }
 > = {
   [KEYS.audio]: {
-    accept: ['audio/*'],
     content: 'Add an audio file',
     icon: <AudioLines />,
   },
   [KEYS.file]: {
-    accept: ['*'],
     content: 'Add a file',
     icon: <FileUp />,
   },
   [KEYS.img]: {
-    accept: ['image/*'],
     content: 'Add an image',
     icon: <ImageIcon />,
   },
   [KEYS.video]: {
-    accept: ['video/*'],
     content: 'Add a video',
     icon: <Film />,
   },
@@ -65,21 +59,6 @@ export const PlaceholderElement = withHOC(
     const isImage = element.mediaType === KEYS.img;
 
     const imageRef = React.useRef<HTMLImageElement>(null);
-
-    const { openFilePicker } = useFilePicker({
-      accept: currentContent.accept,
-      multiple: true,
-      onFilesSelected: ({ plainFiles: updatedFiles }) => {
-        const firstFile = updatedFiles[0];
-        const restFiles = updatedFiles.slice(1);
-
-        replaceCurrentPlaceholder(firstFile);
-
-        if (restFiles.length > 0) {
-          editor.getTransforms(PlaceholderPlugin).insert.media(restFiles);
-        }
-      },
-    });
 
     const replaceCurrentPlaceholder = React.useCallback(
       (file: File) => {
@@ -141,9 +120,8 @@ export const PlaceholderElement = withHOC(
         {(!loading || !isImage) && (
           <div
             className={cn(
-              'flex cursor-pointer select-none items-center rounded-sm bg-muted p-3 pr-9 hover:bg-primary/10'
+              'flex select-none items-center rounded-sm bg-muted p-3 pr-9'
             )}
-            onClick={() => !loading && openFilePicker()}
             contentEditable={false}
           >
             <div className="relative mr-3 flex text-muted-foreground/80 [&_svg]:size-6">

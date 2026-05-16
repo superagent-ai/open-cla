@@ -3,19 +3,20 @@
   "version": "1.0.0",
   "description": "GitHub App for Contributor License Agreement checks.",
   "private": true,
+  "packageManager": "pnpm@10.33.0",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @superagent-cla/shared && npm run build -w @superagent-cla/api && npm run build -w @superagent-cla/web",
-    "db:generate": "npm run db:generate -w @superagent-cla/api",
-    "db:migrate": "npm run db:migrate -w @superagent-cla/api",
-    "dev:api": "npm run build -w @superagent-cla/shared && npm run dev -w @superagent-cla/api",
-    "dev:web": "npm run build -w @superagent-cla/shared && npm run dev -w @superagent-cla/web",
-    "start:api": "npm run start -w @superagent-cla/api",
-    "test": "npm run build -w @superagent-cla/shared && npm run test -w @superagent-cla/api",
-    "typecheck": "npm run typecheck -w @superagent-cla/shared && npm run typecheck -w @superagent-cla/api && npm run typecheck -w @superagent-cla/web"
+    "build": "pnpm --filter @superagent-cla/shared build && pnpm --filter @superagent-cla/api build && pnpm --filter @superagent-cla/web build",
+    "db:generate": "pnpm --filter @superagent-cla/api db:generate",
+    "db:migrate": "pnpm --filter @superagent-cla/api db:migrate",
+    "dev:api": "pnpm --filter @superagent-cla/shared build && pnpm --filter @superagent-cla/api dev",
+    "dev:web": "pnpm --filter @superagent-cla/shared build && pnpm --filter @superagent-cla/web dev",
+    "start:api": "pnpm --filter @superagent-cla/api start",
+    "test": "pnpm --filter @superagent-cla/shared build && pnpm --filter @superagent-cla/api test",
+    "typecheck": "pnpm --filter @superagent-cla/shared typecheck && pnpm --filter @superagent-cla/api typecheck && pnpm --filter @superagent-cla/web typecheck"
   },
   "keywords": [],
   "author": "",

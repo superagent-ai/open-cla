@@ -44,16 +44,16 @@ The OAuth App requests **no scopes**; authorization is enforced per repository u
 ## Database
 
 1. Create a Postgres database.
-2. Run migrations: `npm run db:migrate` from the repository root.
+2. Run migrations: `pnpm run db:migrate` from the repository root.
 
 ## Running the stack
 
 From the repo root:
 
 ```bash
-npm install
-npm run dev:api    # API on port 3000
-npm run dev:web    # admin UI on port 3001
+pnpm install
+pnpm run dev:api    # API on port 3000
+pnpm run dev:web    # admin UI on port 3001
 ```
 
 For local GitHub integration you typically run an `ngrok` (or similar) tunnel to port `3000` and set `PUBLIC_APP_URL` to that HTTPS URL so GitHub can deliver webhooks.
