@@ -90,7 +90,7 @@ export function DashboardShell({
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
         <div
           className={cn(
@@ -291,10 +291,11 @@ export function DashboardShell({
       </header>
 
       <div
-        className={
+        className={cn(
+          "flex-1",
           contentClassName ??
-          "mx-auto flex max-w-6xl flex-col gap-8 px-6 pb-16 pt-16"
-        }
+            "mx-auto flex max-w-6xl flex-col gap-8 px-6 pb-16 pt-16"
+        )}
       >
         {children}
       </div>
