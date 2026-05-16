@@ -120,10 +120,10 @@ function TemplateCard({ template }: { template: GlobalTemplateSummary }) {
     </>
   );
 
-  if (template.isMine) {
+  if (template.isMine || isDefault) {
     return (
       <a
-        href={`/templates/${template.templateId}/edit`}
+        href={template.isMine ? `/templates/${template.templateId}/edit` : `/templates/${template.templateId}`}
         className="group flex cursor-pointer flex-col gap-3 rounded-2xl text-left transition-transform hover:-translate-y-0.5"
       >
         {content}

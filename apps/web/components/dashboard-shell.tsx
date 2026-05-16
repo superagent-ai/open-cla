@@ -45,6 +45,9 @@ export function DashboardShell({
   const searchParams = useSearchParams();
   const { theme, setTheme } = useTheme();
   const docsLikeHeader = docsSearchItems !== undefined || changelogSearchItems !== undefined || docsHeaderWithoutSearch === true;
+  const isReposActive = pathname === "/";
+  const isTemplatesActive = pathname === "/templates" || pathname.startsWith("/templates/");
+  const isDocsActive = pathname === "/docs" || pathname.startsWith("/docs/");
   const loginReturnTo = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
   const [themeMounted, setThemeMounted] = useState(false);
   const [pending, setPending] = useState(false);
@@ -90,7 +93,7 @@ export function DashboardShell({
       <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
         <div
           className={cn(
-            "mx-auto flex max-w-[1536px] items-center gap-6 px-8",
+            "flex w-full items-center gap-6 px-8",
             docsLikeHeader ? "min-h-16 flex-wrap py-2 md:h-16 md:flex-nowrap md:py-0" : "h-16"
           )}
         >
@@ -100,34 +103,30 @@ export function DashboardShell({
             </a>
             <nav className="hidden items-center gap-3 text-base md:flex">
               <a
-                aria-current={pathname === "/" ? "page" : undefined}
+                aria-current={isReposActive ? "page" : undefined}
                 className={cn(
                   "font-medium transition-colors",
-                  pathname === "/" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                  isReposActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 )}
                 href="/"
               >
                 Repos
               </a>
               <a
-                aria-current={pathname === "/templates" ? "page" : undefined}
+                aria-current={isTemplatesActive ? "page" : undefined}
                 className={cn(
                   "font-medium transition-colors",
-                  pathname === "/templates"
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                  isTemplatesActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 )}
                 href="/templates"
               >
                 Templates
               </a>
               <a
-                aria-current={pathname === "/docs" || pathname.startsWith("/docs") ? "page" : undefined}
+                aria-current={isDocsActive ? "page" : undefined}
                 className={cn(
                   "font-medium transition-colors",
-                  pathname === "/docs" || pathname.startsWith("/docs")
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                  isDocsActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 )}
                 href="/docs"
               >
