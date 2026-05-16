@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { SigningPage } from "@/components/signing-page";
+import { SiteFooter } from "@/components/site-footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { githubLoginUrl, serverApiBaseUrl } from "@/lib/api";
@@ -58,31 +59,34 @@ function SigningLoadError({
   returnPath: string;
 }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-12 text-foreground">
-      <Card className="w-full max-w-lg">
-        <CardHeader>
-          <a href="/" className="mb-4 inline-flex items-center">
-            <img src="/images/logo.webp" alt="OpenCLA" className="h-10 w-auto object-contain" />
-          </a>
-          <CardTitle>Unable to load CLA</CardTitle>
-          <CardDescription>
-            {status === 404
-              ? "The repository is not ready for CLA signing yet."
-              : "The signing link could not be loaded."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {message}
-          </div>
-          {status === 401 ? (
-            <Button asChild>
-              <a href={githubLoginUrl(returnPath)}>Continue with GitHub</a>
-            </Button>
-          ) : null}
-        </CardContent>
-      </Card>
-    </main>
+    <>
+      <main className="flex min-h-screen items-center justify-center bg-background px-6 py-12 text-foreground">
+        <Card className="w-full max-w-lg">
+          <CardHeader>
+            <a href="/" className="mb-4 inline-flex items-center">
+              <img src="/images/logo.webp" alt="OpenCLA" className="h-10 w-auto object-contain" />
+            </a>
+            <CardTitle>Unable to load CLA</CardTitle>
+            <CardDescription>
+              {status === 404
+                ? "The repository is not ready for CLA signing yet."
+                : "The signing link could not be loaded."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {message}
+            </div>
+            {status === 401 ? (
+              <Button asChild>
+                <a href={githubLoginUrl(returnPath)}>Continue with GitHub</a>
+              </Button>
+            ) : null}
+          </CardContent>
+        </Card>
+      </main>
+      <SiteFooter />
+    </>
   );
 }
 

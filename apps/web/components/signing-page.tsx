@@ -13,6 +13,7 @@ import {
   CardTitle
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SiteFooter } from "@/components/site-footer";
 import { cn } from "@/lib/utils";
 
 type SigningPageProps = {
@@ -78,122 +79,125 @@ export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
   const [signingKind, setSigningKind] = useState<SigningKind | null>(signedKind ?? null);
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10 md:py-16">
-        <header className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-5">
-            <a href="/" className="inline-flex items-center">
-              <img src="/images/logo.webp" alt="OpenCLA" className="h-10 w-auto object-contain" />
-            </a>
-            <div className="space-y-3">
-              <h1 className="max-w-3xl text-3xl font-semibold tracking-tight md:text-4xl">
-                {signing.cla.title}
-              </h1>
-              <p className="max-w-2xl text-base text-muted-foreground">
-                Review and sign the Contributor License Agreement for{" "}
-                <span className="font-medium text-foreground">{signing.repository.fullName}</span>.
-              </p>
+    <>
+      <main className="min-h-screen bg-background text-foreground">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10 md:py-16">
+          <header className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-5">
+              <a href="/" className="inline-flex items-center">
+                <img src="/images/logo.webp" alt="OpenCLA" className="h-10 w-auto object-contain" />
+              </a>
+              <div className="space-y-3">
+                <h1 className="max-w-3xl text-3xl font-semibold tracking-tight md:text-4xl">
+                  {signing.cla.title}
+                </h1>
+                <p className="max-w-2xl text-base text-muted-foreground">
+                  Review and sign the Contributor License Agreement for{" "}
+                  <span className="font-medium text-foreground">{signing.repository.fullName}</span>.
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="rounded-full bg-secondary px-4 py-2 text-sm text-secondary-foreground">
-            Signed in as <span className="font-medium">@{signing.user.login}</span>
-          </div>
-        </header>
+            <div className="rounded-full bg-secondary px-4 py-2 text-sm text-secondary-foreground">
+              Signed in as <span className="font-medium">@{signing.user.login}</span>
+            </div>
+          </header>
 
-        {signedKind ? (
-          <StatusMessage
-            tone="success"
-            title="CLA signature recorded"
-            message={
-              signedKind === "personal"
-                ? "Your personal CLA signature has been recorded."
-                : "The corporate CLA signature has been recorded."
-            }
-          />
-        ) : null}
+          {signedKind ? (
+            <StatusMessage
+              tone="success"
+              title="CLA signature recorded"
+              message={
+                signedKind === "personal"
+                  ? "Your personal CLA signature has been recorded."
+                  : "The corporate CLA signature has been recorded."
+              }
+            />
+          ) : null}
 
-        {error ? (
-          <StatusMessage tone="error" title="Unable to record signature" message={error} />
-        ) : null}
+          {error ? (
+            <StatusMessage tone="error" title="Unable to record signature" message={error} />
+          ) : null}
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-          <Card className="gap-0 py-0">
-            <CardContent className="px-6 py-6 md:px-8">
-              {signing.cla.body.trim() ? (
-                <article>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                    {signing.cla.body}
-                  </ReactMarkdown>
-                </article>
-              ) : (
-                <p className="text-sm text-muted-foreground">This CLA document has no body.</p>
-              )}
-            </CardContent>
-          </Card>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+            <Card className="gap-0 py-0">
+              <CardContent className="px-6 py-6 md:px-8">
+                {signing.cla.body.trim() ? (
+                  <article>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                      {signing.cla.body}
+                    </ReactMarkdown>
+                  </article>
+                ) : (
+                  <p className="text-sm text-muted-foreground">This CLA document has no body.</p>
+                )}
+              </CardContent>
+            </Card>
 
-          <Card className="lg:sticky lg:top-8">
-            <CardHeader>
-              <CardTitle>Sign agreement</CardTitle>
-              <p className="text-sm text-muted-foreground">Choose how you are signing before continuing.</p>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="grid gap-3">
-                <SigningChoiceButton
-                  active={signingKind === "personal"}
-                  description="I am signing as my GitHub user account."
-                  label="Personal"
-                  onClick={() => setSigningKind("personal")}
-                />
-                <SigningChoiceButton
-                  active={signingKind === "corporate"}
-                  description="I am authorized to sign for an organization."
-                  label="Organization"
-                  onClick={() => setSigningKind("corporate")}
-                />
-              </div>
+            <Card className="lg:sticky lg:top-8">
+              <CardHeader>
+                <CardTitle>Sign agreement</CardTitle>
+                <p className="text-sm text-muted-foreground">Choose how you are signing before continuing.</p>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid gap-3">
+                  <SigningChoiceButton
+                    active={signingKind === "personal"}
+                    description="I am signing as my GitHub user account."
+                    label="Personal"
+                    onClick={() => setSigningKind("personal")}
+                  />
+                  <SigningChoiceButton
+                    active={signingKind === "corporate"}
+                    description="I am authorized to sign for an organization."
+                    label="Organization"
+                    onClick={() => setSigningKind("corporate")}
+                  />
+                </div>
 
-              <div className="border-t pt-5">
-                {signingKind === "personal" ? (
-                  <form action="/sign/personal" method="post" className="space-y-4">
-                    <HiddenSigningFields signing={signing} />
+                <div className="border-t pt-5">
+                  {signingKind === "personal" ? (
+                    <form action="/sign/personal" method="post" className="space-y-4">
+                      <HiddenSigningFields signing={signing} />
+                      <p className="text-sm text-muted-foreground">
+                        This records a CLA signature for <span className="font-medium text-foreground">@{signing.user.login}</span>.
+                      </p>
+                      <Button className="w-full" type="submit">
+                        I agree and sign personally
+                      </Button>
+                    </form>
+                  ) : null}
+
+                  {signingKind === "corporate" ? (
+                    <form action="/sign/corporate" method="post" className="space-y-4">
+                      <HiddenSigningFields signing={signing} />
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground" htmlFor="orgLogin">
+                          Organization login
+                        </label>
+                        <Input id="orgLogin" name="orgLogin" placeholder="acme" required />
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        GitHub will verify that you are an owner of this organization.
+                      </p>
+                      <Button className="w-full" type="submit">
+                        I agree on behalf of this organization
+                      </Button>
+                    </form>
+                  ) : null}
+
+                  {!signingKind ? (
                     <p className="text-sm text-muted-foreground">
-                      This records a CLA signature for <span className="font-medium text-foreground">@{signing.user.login}</span>.
+                      Select a signing type above to see the required confirmation.
                     </p>
-                    <Button className="w-full" type="submit">
-                      I agree and sign personally
-                    </Button>
-                  </form>
-                ) : null}
-
-                {signingKind === "corporate" ? (
-                  <form action="/sign/corporate" method="post" className="space-y-4">
-                    <HiddenSigningFields signing={signing} />
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground" htmlFor="orgLogin">
-                        Organization login
-                      </label>
-                      <Input id="orgLogin" name="orgLogin" placeholder="acme" required />
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      GitHub will verify that you are an owner of this organization.
-                    </p>
-                    <Button className="w-full" type="submit">
-                      I agree on behalf of this organization
-                    </Button>
-                  </form>
-                ) : null}
-
-                {!signingKind ? (
-                  <p className="text-sm text-muted-foreground">
-                    Select a signing type above to see the required confirmation.
-                  </p>
-                ) : null}
-              </div>
-            </CardContent>
-          </Card>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+      <SiteFooter />
+    </>
   );
 }
 
