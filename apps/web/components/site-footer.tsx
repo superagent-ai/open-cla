@@ -1,6 +1,6 @@
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border bg-background py-8">
+    <footer className="mt-auto border-t border-border bg-background py-8">
       <div className="w-full px-4 md:px-8">
         <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
           <p className="text-sm text-muted-foreground">&copy; 2026 Superagent Technologies Inc.</p>
