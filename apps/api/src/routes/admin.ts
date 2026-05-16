@@ -264,8 +264,11 @@ export async function registerAdminRoutes(
       return reply.code(404).send({ error: "Template not found" });
     }
 
-    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
-      return reply.code(403).send({ error: "Template not editable" });
+    const isVisibleDefault = template.source === "default";
+    const isOwnedUpload =
+      template.source === "uploaded" && template.createdByGithubUserId === session.user.githubUserId;
+    if (!isVisibleDefault && !isOwnedUpload) {
+      return reply.code(403).send({ error: "Template not accessible" });
     }
 
     const summary = await toTemplateSummary(params.db, template);
@@ -274,7 +277,7 @@ export async function registerAdminRoutes(
         ...summary,
         createdByLogin: template.createdByLogin,
         createdAt: template.createdAt.toISOString(),
-        isMine: true
+        isMine: isOwnedUpload
       },
       body: summary.latestVersion?.body ?? ""
     };
@@ -338,6 +341,75 @@ export async function registerAdminRoutes(
       versionId: newVersionId ?? existingVersion?.claTemplateVersionId ?? null,
       versionHash
     });
+  });
+
+  app.post("/api/admin/templates/:templateId/duplicate", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    const { templateId } = request.params as { templateId: string };
+    const template = await params.db.query.claTemplates.findFirst({
+      where: (table) => eq(table.claTemplateId, templateId)
+    });
+    if (!template || template.repositoryId !== null) {
+      return reply.code(404).send({ error: "Template not found" });
+    }
+    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
+      return reply.code(403).send({ error: "Template not duplicable" });
+    }
+
+    const latestVersion = await getLatestTemplateVersion(params.db, template.claTemplateId);
+    if (!latestVersion) {
+      return reply.code(400).send({ error: "Template has no version to duplicate" });
+    }
+
+    const copiedTemplateId = createId("tmpl");
+    const copiedVersionId = createId("tmplver");
+    await params.db.insert(claTemplates).values({
+      claTemplateId: copiedTemplateId,
+      repositoryId: null,
+      source: "uploaded",
+      name: `Copy of ${template.name}`,
+      description: template.description,
+      createdByGithubUserId: session.user.githubUserId,
+      createdByLogin: session.user.login
+    });
+
+    await params.db.insert(claTemplateVersions).values({
+      claTemplateVersionId: copiedVersionId,
+      claTemplateId: copiedTemplateId,
+      title: latestVersion.title,
+      body: latestVersion.body,
+      versionHash: latestVersion.versionHash,
+      createdByGithubUserId: session.user.githubUserId,
+      createdByLogin: session.user.login
+    });
+
+    return reply.code(201).send({ ok: true, templateId: copiedTemplateId });
+  });
+
+  app.delete("/api/admin/templates/:templateId", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    const { templateId } = request.params as { templateId: string };
+    const template = await params.db.query.claTemplates.findFirst({
+      where: (table) => eq(table.claTemplateId, templateId)
+    });
+    if (!template || template.repositoryId !== null) {
+      return reply.code(404).send({ error: "Template not found" });
+    }
+    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
+      return reply.code(403).send({ error: "Template not deletable" });
+    }
+
+    await params.db.delete(claTemplates).where(eq(claTemplates.claTemplateId, template.claTemplateId));
+
+    return reply.send({ ok: true });
   });
 
   app.post("/api/admin/templates/global", async (request, reply) => {
@@ -537,10 +609,7 @@ async function toTemplateSummary(
   db: DbClient,
   template: ClaTemplate
 ): Promise<TemplateSummary> {
-  const versions = await db.query.claTemplateVersions.findMany({
-    where: (table) => eq(table.claTemplateId, template.claTemplateId)
-  });
-  const latestVersion = versions.sort(compareByCreatedAtDesc)[0] ?? null;
+  const latestVersion = await getLatestTemplateVersion(db, template.claTemplateId);
 
   return {
     templateId: template.claTemplateId,
@@ -550,6 +619,17 @@ async function toTemplateSummary(
     repositoryId: template.repositoryId ?? null,
     latestVersion: latestVersion ? toTemplateVersion(latestVersion) : null
   };
+}
+
+async function getLatestTemplateVersion(
+  db: DbClient,
+  templateId: string
+): Promise<ClaTemplateVersion | null> {
+  const versions = await db.query.claTemplateVersions.findMany({
+    where: (table) => eq(table.claTemplateId, templateId)
+  });
+
+  return versions.sort(compareByCreatedAtDesc)[0] ?? null;
 }
 
 function toTemplateVersion(version: ClaTemplateVersion): TemplateVersion {

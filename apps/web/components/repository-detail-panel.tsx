@@ -7,11 +7,19 @@ import type {
   TemplateSummary,
   TemplatesResponse
 } from "@superagent-cla/shared";
-import { ArrowLeft, ChevronsUpDown, ExternalLink, Loader } from "lucide-react";
+import { ChevronsUpDown, ExternalLink, Loader } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator
+} from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -65,14 +73,21 @@ export function RepositoryDetailPanel({
   return (
     <section className="space-y-12">
       <header className="space-y-3">
-        <button
-          type="button"
-          onClick={onNavigateBack}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          All repositories
-        </button>
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <button type="button" onClick={onNavigateBack}>
+                  Repositories
+                </button>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>{repo.fullName}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
         <div className="space-y-1">
           <div className="inline-flex max-w-full items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{templatesResponse.repository.fullName}</h1>
@@ -373,7 +388,7 @@ function ClaPolicySearchableSelect({
             {globalCustomTemplates.length > 0 ? (
               <>
                 <CommandSeparator />
-                <CommandGroup heading="Workspace uploads">
+                <CommandGroup heading="Your templates">
                   {globalCustomTemplates.map((template) => {
                     const versionId = template.latestVersion?.templateVersionId;
                     if (!versionId) {

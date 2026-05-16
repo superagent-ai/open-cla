@@ -166,6 +166,8 @@ export function SearchCommand({ apiBaseUrl, open, onOpenChange }: SearchCommandP
                     select(() => {
                       if (template.isMine) {
                         router.push(`/templates/${template.templateId}/edit`);
+                      } else if (template.source === "default") {
+                        router.push(`/templates/${template.templateId}`);
                       } else {
                         router.push("/templates");
                       }

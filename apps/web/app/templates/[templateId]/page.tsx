@@ -1,14 +1,14 @@
 import type { AdminUser, TemplateDetailResponse } from "@superagent-cla/shared";
 import { notFound, redirect } from "next/navigation";
 
-import { TemplateEditDashboard } from "@/components/template-edit-dashboard";
+import { TemplateViewDashboard } from "@/components/template-view-dashboard";
 import { ApiError, adminApiFetch, browserApiBaseUrl } from "@/lib/api";
 
-type EditTemplatePageProps = {
+type TemplatePageProps = {
   params: Promise<{ templateId: string }>;
 };
 
-export default async function EditTemplatePage({ params }: EditTemplatePageProps) {
+export default async function TemplatePage({ params }: TemplatePageProps) {
   const { templateId } = await params;
 
   try {
@@ -17,15 +17,10 @@ export default async function EditTemplatePage({ params }: EditTemplatePageProps
       adminApiFetch<TemplateDetailResponse>(`/api/admin/templates/${templateId}`)
     ]);
 
-    if (!detail.template.isMine) {
-      redirect(`/templates/${templateId}`);
-    }
-
     return (
-      <TemplateEditDashboard
+      <TemplateViewDashboard
         apiBaseUrl={browserApiBaseUrl}
         user={user}
-        templateId={templateId}
         template={detail.template}
         body={detail.body}
       />
