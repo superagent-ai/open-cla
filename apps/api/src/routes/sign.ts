@@ -1,5 +1,10 @@
 import type { App } from "@octokit/app";
 import type { PullRequestEvent } from "@octokit/webhooks-types";
+import type {
+  SigningContext,
+  SigningPageResponse,
+  SigningSubmitResponse
+} from "@superagent-cla/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, eq } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
@@ -14,7 +19,7 @@ import {
 import { getInstallationOctokit } from "../github/app.js";
 import { handlePullRequestWebhook } from "../webhooks/pullRequest.js";
 import { createId } from "../utils/ids.js";
-import { getCurrentSession } from "./session.js";
+import { getCurrentSession, type CurrentSession } from "./session.js";
 
 type SignQuery = {
   owner?: string;
@@ -35,6 +40,12 @@ type GitHubOrgMembership = {
   state?: string;
 };
 
+type SigningState = {
+  context: SigningContext;
+  repository: typeof repositories.$inferSelect;
+  cla: Awaited<ReturnType<typeof resolveClaForRepository>>;
+};
+
 export async function registerSignRoutes(
   app: FastifyInstance,
   params: {
@@ -53,76 +64,97 @@ export async function registerSignRoutes(
   });
 
   app.get("/sign", async (request, reply) => {
+    return reply.redirect(webSignUrl(params.config, request.url));
+  });
+
+  app.get("/api/sign", async (request, reply) => {
     const session = await getCurrentSession(params.db, request);
     if (!session) {
-      return reply.redirect(
-        `/auth/github/start?returnTo=${encodeURIComponent(request.url)}`
-      );
+      return reply.code(401).send({ error: "Authentication required" });
     }
 
-    const query = request.query as SignQuery;
-    if (!query.owner || !query.repo) {
-      return reply.code(400).type("text/html").send(
-        page("Missing repository", "<p>Missing owner or repository in signing URL.</p>")
-      );
+    const state = await loadSigningState(params, request.query as SignQuery);
+    if (!state.ok) {
+      return reply.code(state.statusCode).send({ error: state.message });
     }
 
-    const repository = await params.db.query.repositories.findFirst({
-      where: (table) => and(eq(table.owner, query.owner!), eq(table.name, query.repo!))
-    });
+    return toSigningPageResponse(session, state);
+  });
 
-    if (!repository) {
-      return reply.code(404).type("text/html").send(
-        page(
-          "Repository not found",
-          "<p>This repository has not been seen by the CLA app yet. Open or update a pull request first.</p>"
-        )
-      );
+  app.post("/api/sign/personal", async (request, reply) => {
+    const session = await getCurrentSession(params.db, request);
+    if (!session) {
+      return reply.code(401).send({ error: "Authentication required" });
     }
 
-    const octokit = await getInstallationOctokit(params.githubApp, repository.installationId);
-    const cla = await resolveClaForRepository({
+    const body = request.body as FormBody;
+    const context = parseSigningContext(body);
+    if (!context) {
+      return reply.code(400).send({ error: "Missing owner or repository in signing request." });
+    }
+
+    const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
+    await recordPersonalSignature(params.db, session, request, claDocument);
+    await triggerPullRequestRecheck({
       db: params.db,
-      octokit,
-      owner: query.owner,
-      repo: query.repo,
-      repositoryId: repository.repositoryId,
-      ref: repository.defaultBranch,
-      defaultTemplateName: params.config.DEFAULT_CLA_TEMPLATE_NAME
+      githubApp: params.githubApp,
+      config: params.config,
+      owner: context.owner,
+      repo: context.repo,
+      pull: context.pull ?? undefined
     });
 
-    const hiddenFields = [
-      hidden("claDocumentId", cla.document.claDocumentId),
-      hidden("claVersionHash", cla.versionHash),
-      hidden("owner", query.owner),
-      hidden("repo", query.repo),
-      hidden("pull", query.pull ?? ""),
-      hidden("sha", query.sha ?? "")
-    ].join("\n");
+    const response: SigningSubmitResponse = {
+      ok: true,
+      message: "Your personal CLA signature has been recorded.",
+      context
+    };
+    return response;
+  });
 
-    return reply.type("text/html").send(
-      page(
-        "Sign CLA",
-        [
-          `<p>Signed in as <strong>@${escapeHtml(session.user.login)}</strong>.</p>`,
-          `<h1>${escapeHtml(cla.title)}</h1>`,
-          `<p><small>Source: ${escapeHtml(cla.source)}. Version: ${escapeHtml(cla.versionHash)}</small></p>`,
-          `<pre>${escapeHtml(cla.body)}</pre>`,
-          "<h2>Personal CLA</h2>",
-          '<form method="post" action="/sign/personal">',
-          hiddenFields,
-          '<button type="submit">I agree and sign personally</button>',
-          "</form>",
-          "<h2>Corporate CLA</h2>",
-          "<p>Corporate signing is limited to GitHub organization owners for the selected organization.</p>",
-          '<form method="post" action="/sign/corporate">',
-          hiddenFields,
-          '<label>Organization login <input name="orgLogin" required /></label>',
-          '<button type="submit">I agree on behalf of this organization</button>',
-          "</form>"
-        ].join("\n")
-      )
-    );
+  app.post("/api/sign/corporate", async (request, reply) => {
+    const session = await getCurrentSession(params.db, request);
+    if (!session) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+
+    const body = request.body as FormBody;
+    const context = parseSigningContext(body);
+    if (!context) {
+      return reply.code(400).send({ error: "Missing owner or repository in signing request." });
+    }
+
+    const orgLogin = body.orgLogin?.trim();
+    if (!orgLogin) {
+      return reply.code(400).send({ error: "Missing organization login" });
+    }
+
+    const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
+    let org: GitHubOrg;
+    try {
+      await assertCanSignForOrg(session.accessToken, orgLogin);
+      org = await githubFetch<GitHubOrg>(session.accessToken, `/orgs/${encodeURIComponent(orgLogin)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "GitHub organization verification failed";
+      return reply.code(403).send({ error: message });
+    }
+
+    await recordCorporateAgreement(params.db, session, org, claDocument);
+    await triggerPullRequestRecheck({
+      db: params.db,
+      githubApp: params.githubApp,
+      config: params.config,
+      owner: context.owner,
+      repo: context.repo,
+      pull: context.pull ?? undefined
+    });
+
+    const response: SigningSubmitResponse = {
+      ok: true,
+      message: `The corporate CLA for ${org.login} has been recorded.`,
+      context
+    };
+    return response;
   });
 
   app.post("/sign/personal", async (request, reply) => {
@@ -130,28 +162,7 @@ export async function registerSignRoutes(
     const body = request.body as FormBody;
     const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
 
-    await params.db
-      .insert(personalSignatures)
-      .values({
-        signatureId: createId("sig"),
-        githubUserId: session.user.githubUserId,
-        claDocumentId: claDocument.claDocumentId,
-        claVersionHash: claDocument.versionHash,
-        signerLogin: session.user.login,
-        signerIp: getClientIp(request),
-        userAgent: request.headers["user-agent"]
-      })
-      .onConflictDoUpdate({
-        target: [personalSignatures.githubUserId, personalSignatures.claVersionHash],
-        set: {
-          revokedAt: null,
-          signedAt: new Date(),
-          signerLogin: session.user.login,
-          signerIp: getClientIp(request),
-          userAgent: request.headers["user-agent"],
-          updatedAt: new Date()
-        }
-      });
+    await recordPersonalSignature(params.db, session, request, claDocument);
 
     await triggerPullRequestRecheck({
       db: params.db,
@@ -179,26 +190,7 @@ export async function registerSignRoutes(
     await assertCanSignForOrg(session.accessToken, orgLogin);
     const org = await githubFetch<GitHubOrg>(session.accessToken, `/orgs/${encodeURIComponent(orgLogin)}`);
 
-    await params.db
-      .insert(corporateAgreements)
-      .values({
-        corporateAgreementId: createId("corp"),
-        orgId: String(org.id),
-        orgLogin: org.login,
-        claDocumentId: claDocument.claDocumentId,
-        claVersionHash: claDocument.versionHash,
-        authorizedSignerUserId: session.user.githubUserId,
-        authorizedSignerLogin: session.user.login
-      })
-      .onConflictDoUpdate({
-        target: [corporateAgreements.orgId, corporateAgreements.claVersionHash],
-        set: {
-          authorizedSignerUserId: session.user.githubUserId,
-          authorizedSignerLogin: session.user.login,
-          effectiveUntil: null,
-          updatedAt: new Date()
-        }
-      });
+    await recordCorporateAgreement(params.db, session, org, claDocument);
 
     await triggerPullRequestRecheck({
       db: params.db,
@@ -216,6 +208,173 @@ export async function registerSignRoutes(
       )
     );
   });
+}
+
+async function loadSigningState(
+  params: {
+    db: DbClient;
+    githubApp: App;
+    config: AppConfig;
+  },
+  query: SignQuery
+): Promise<
+  | ({ ok: true } & SigningState)
+  | { ok: false; statusCode: 400 | 404; message: string }
+> {
+  const context = parseSigningContext(query);
+  if (!context) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: "Missing owner or repository in signing URL."
+    };
+  }
+
+  const repository = await params.db.query.repositories.findFirst({
+    where: (table) => and(eq(table.owner, context.owner), eq(table.name, context.repo))
+  });
+
+  if (!repository) {
+    return {
+      ok: false,
+      statusCode: 404,
+      message: "This repository has not been seen by the CLA app yet. Open or update a pull request first."
+    };
+  }
+
+  const octokit = await getInstallationOctokit(params.githubApp, repository.installationId);
+  const cla = await resolveClaForRepository({
+    db: params.db,
+    octokit,
+    owner: context.owner,
+    repo: context.repo,
+    repositoryId: repository.repositoryId,
+    ref: repository.defaultBranch,
+    defaultTemplateName: params.config.DEFAULT_CLA_TEMPLATE_NAME
+  });
+
+  return {
+    ok: true,
+    context,
+    repository,
+    cla
+  };
+}
+
+function toSigningPageResponse(
+  session: CurrentSession,
+  state: SigningState
+): SigningPageResponse {
+  return {
+    user: {
+      githubUserId: session.user.githubUserId,
+      login: session.user.login,
+      avatarUrl: session.user.avatarUrl
+    },
+    repository: {
+      owner: state.repository.owner,
+      name: state.repository.name,
+      fullName: state.repository.fullName
+    },
+    cla: {
+      documentId: state.cla.document.claDocumentId,
+      title: state.cla.title,
+      body: state.cla.body,
+      versionHash: state.cla.versionHash,
+      source: state.cla.source
+    },
+    context: state.context
+  };
+}
+
+function parseSigningContext(input: {
+  owner?: string;
+  repo?: string;
+  pull?: string;
+  sha?: string;
+}): SigningContext | null {
+  const owner = input.owner?.trim();
+  const repo = input.repo?.trim();
+  if (!owner || !repo) {
+    return null;
+  }
+
+  return {
+    owner,
+    repo,
+    pull: optionalString(input.pull),
+    sha: optionalString(input.sha)
+  };
+}
+
+async function recordPersonalSignature(
+  db: DbClient,
+  session: CurrentSession,
+  request: FastifyRequest,
+  claDocument: Awaited<ReturnType<typeof getClaDocument>>
+): Promise<void> {
+  await db
+    .insert(personalSignatures)
+    .values({
+      signatureId: createId("sig"),
+      githubUserId: session.user.githubUserId,
+      claDocumentId: claDocument.claDocumentId,
+      claVersionHash: claDocument.versionHash,
+      signerLogin: session.user.login,
+      signerIp: getClientIp(request),
+      userAgent: getUserAgent(request)
+    })
+    .onConflictDoUpdate({
+      target: [personalSignatures.githubUserId, personalSignatures.claVersionHash],
+      set: {
+        revokedAt: null,
+        signedAt: new Date(),
+        signerLogin: session.user.login,
+        signerIp: getClientIp(request),
+        userAgent: getUserAgent(request),
+        updatedAt: new Date()
+      }
+    });
+}
+
+async function recordCorporateAgreement(
+  db: DbClient,
+  session: CurrentSession,
+  org: GitHubOrg,
+  claDocument: Awaited<ReturnType<typeof getClaDocument>>
+): Promise<void> {
+  await db
+    .insert(corporateAgreements)
+    .values({
+      corporateAgreementId: createId("corp"),
+      orgId: String(org.id),
+      orgLogin: org.login,
+      claDocumentId: claDocument.claDocumentId,
+      claVersionHash: claDocument.versionHash,
+      authorizedSignerUserId: session.user.githubUserId,
+      authorizedSignerLogin: session.user.login
+    })
+    .onConflictDoUpdate({
+      target: [corporateAgreements.orgId, corporateAgreements.claVersionHash],
+      set: {
+        authorizedSignerUserId: session.user.githubUserId,
+        authorizedSignerLogin: session.user.login,
+        effectiveUntil: null,
+        updatedAt: new Date()
+      }
+    });
+}
+
+function optionalString(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function webSignUrl(config: AppConfig, requestUrl: string): string {
+  const source = new URL(requestUrl, config.PUBLIC_APP_URL);
+  const destination = new URL("/sign", config.ADMIN_WEB_URL);
+  destination.search = source.search;
+  return destination.toString();
 }
 
 async function requireSession(db: DbClient, request: FastifyRequest) {
@@ -390,4 +549,9 @@ function getClientIp(request: FastifyRequest): string | undefined {
   }
 
   return request.ip;
+}
+
+function getUserAgent(request: FastifyRequest): string | undefined {
+  const userAgent = request.headers["user-agent"];
+  return Array.isArray(userAgent) ? userAgent[0] : userAgent;
 }
