@@ -11,7 +11,29 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
   title: "OpenCLA",
-  description: "CLA automation, managed templates, and signature visibility for GitHub repositories."
+  description: "CLA automation, managed templates, and signature visibility for GitHub repositories.",
+  icons: {
+    icon: [
+      {
+        url: "/images/superagent-logo-square-flat-favicon.webp",
+        media: "(prefers-color-scheme: light)"
+      },
+      {
+        url: "/images/superagent-logo-square-flat-favicon-dark.webp",
+        media: "(prefers-color-scheme: dark)"
+      }
+    ],
+    apple: [
+      {
+        url: "/images/superagent-logo-square-flat-favicon.webp",
+        media: "(prefers-color-scheme: light)"
+      },
+      {
+        url: "/images/superagent-logo-square-flat-favicon-dark.webp",
+        media: "(prefers-color-scheme: dark)"
+      }
+    ]
+  }
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
