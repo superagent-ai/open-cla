@@ -21,7 +21,7 @@
     "@octokit/oauth-app": "^8.0.3",
     "@octokit/webhooks": "^14.2.0",
     "@octokit/webhooks-types": "^7.6.1",
-    "@superagent-cla/shared": "1.0.0",
+    "@superagent-cla/shared": "workspace:*",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.5",
