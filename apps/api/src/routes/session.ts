@@ -20,6 +20,7 @@ export async function createUserSession(params: {
   avatarUrl?: string | null;
   accessToken: string;
   expiresAt?: Date | null;
+  cookieDomain?: string;
 }): Promise<void> {
   await params.db
     .insert(githubUsers)
@@ -50,7 +51,8 @@ export async function createUserSession(params: {
     path: "/",
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    signed: true
+    signed: true,
+    ...(params.cookieDomain ? { domain: params.cookieDomain } : {})
   });
 }
 
@@ -95,6 +97,9 @@ export async function getCurrentSession(
   };
 }
 
-export function clearSession(reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE, { path: "/" });
+export function clearSession(reply: FastifyReply, cookieDomain?: string): void {
+  reply.clearCookie(SESSION_COOKIE, {
+    path: "/",
+    ...(cookieDomain ? { domain: cookieDomain } : {})
+  });
 }

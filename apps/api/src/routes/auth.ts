@@ -27,6 +27,7 @@ export async function registerAuthRoutes(
     const state = randomBytes(24).toString("hex");
     const returnTo = sanitizeReturnTo(query.returnTo, params.config.ADMIN_WEB_URL);
     const redirectUrl = new URL("/auth/github/callback", params.config.PUBLIC_APP_URL).toString();
+    const cookieDomain = params.config.COOKIE_DOMAIN;
     const { url } = params.oauthApp.getWebFlowAuthorizationUrl({
       state,
       redirectUrl,
@@ -39,14 +40,16 @@ export async function registerAuthRoutes(
         path: "/",
         sameSite: "lax",
         secure: params.config.NODE_ENV === "production",
-        signed: true
+        signed: true,
+        ...(cookieDomain ? { domain: cookieDomain } : {})
       })
       .setCookie(OAUTH_RETURN_COOKIE, returnTo, {
         httpOnly: true,
         path: "/",
         sameSite: "lax",
         secure: params.config.NODE_ENV === "production",
-        signed: true
+        signed: true,
+        ...(cookieDomain ? { domain: cookieDomain } : {})
       })
       .redirect(url);
   });
@@ -80,7 +83,8 @@ export async function registerAuthRoutes(
       login: githubUser.login,
       avatarUrl: githubUser.avatar_url,
       accessToken: token,
-      expiresAt
+      expiresAt,
+      cookieDomain: params.config.COOKIE_DOMAIN
     });
 
     const returnCookie = request.cookies[OAUTH_RETURN_COOKIE];
@@ -89,13 +93,19 @@ export async function registerAuthRoutes(
       unsignedReturn?.valid && unsignedReturn.value ? unsignedReturn.value : "/";
 
     reply
-      .clearCookie(OAUTH_STATE_COOKIE, { path: "/" })
-      .clearCookie(OAUTH_RETURN_COOKIE, { path: "/" })
+      .clearCookie(OAUTH_STATE_COOKIE, {
+        path: "/",
+        ...(params.config.COOKIE_DOMAIN ? { domain: params.config.COOKIE_DOMAIN } : {})
+      })
+      .clearCookie(OAUTH_RETURN_COOKIE, {
+        path: "/",
+        ...(params.config.COOKIE_DOMAIN ? { domain: params.config.COOKIE_DOMAIN } : {})
+      })
       .redirect(returnTo);
   });
 
   app.post("/auth/logout", async (_request, reply) => {
-    clearSession(reply);
+    clearSession(reply, params.config.COOKIE_DOMAIN);
     return reply.redirect("/");
   });
 }
