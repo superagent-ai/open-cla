@@ -3,8 +3,8 @@ import Link from "next/link";
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border bg-background px-6 py-16">
-      <div className="container mx-auto max-w-5xl">
+    <footer className="border-t border-border bg-background py-16">
+      <div className="w-full px-4 md:px-8">
         <div className="grid grid-cols-2 gap-12 md:grid-cols-4">
           <div>
             <h4 className="mb-4 font-medium">Open Source</h4>
