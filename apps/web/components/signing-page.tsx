@@ -79,7 +79,7 @@ export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-10 md:py-16">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10 md:py-16">
         <header className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div className="space-y-5">
             <a href="/" className="inline-flex items-center">
