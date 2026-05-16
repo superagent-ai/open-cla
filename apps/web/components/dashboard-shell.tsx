@@ -11,6 +11,7 @@ import { ChangelogSearch } from "@/components/changelog-search";
 import { DocsSearch } from "@/components/docs-search";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchCommand } from "@/components/search-command";
+import { SiteFooter } from "@/components/site-footer";
 import { githubLoginUrl } from "@/lib/api-public";
 import type { ChangelogSearchItem } from "@/lib/changelog";
 import type { DocSearchItem } from "@/lib/docs";
@@ -297,6 +298,8 @@ export function DashboardShell({
       >
         {children}
       </div>
+
+      <SiteFooter />
 
       {docsLikeHeader ? null : (
         <SearchCommand apiBaseUrl={apiBaseUrl} open={searchOpen} onOpenChange={setSearchOpen} />

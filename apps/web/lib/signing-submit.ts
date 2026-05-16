@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { githubLoginUrl, serverApiBaseUrl } from "@/lib/api";
 
 type SigningKind = "personal" | "corporate";
+const POST_REDIRECT_STATUS = 303;
 
 export async function proxySigningSubmission(
   request: Request,
@@ -25,14 +26,14 @@ export async function proxySigningSubmission(
   });
 
   if (upstream.status === 401) {
-    return NextResponse.redirect(githubLoginUrl(returnPath));
+    return NextResponse.redirect(githubLoginUrl(returnPath), { status: POST_REDIRECT_STATUS });
   }
 
   const redirectParams = signingSearchParams(payload);
   if (upstream.ok) {
     const pullRequestUrl = githubPullRequestUrl(payload);
     if (pullRequestUrl) {
-      return NextResponse.redirect(pullRequestUrl);
+      return NextResponse.redirect(pullRequestUrl, { status: POST_REDIRECT_STATUS });
     }
 
     redirectParams.set("signed", kind);
@@ -40,7 +41,9 @@ export async function proxySigningSubmission(
     redirectParams.set("error", await readErrorMessage(upstream));
   }
 
-  return NextResponse.redirect(new URL(`/sign?${redirectParams.toString()}`, request.url));
+  return NextResponse.redirect(new URL(`/sign?${redirectParams.toString()}`, request.url), {
+    status: POST_REDIRECT_STATUS
+  });
 }
 
 function formPayload(formData: FormData, kind: SigningKind): Record<string, string> {
