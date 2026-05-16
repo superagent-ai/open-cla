@@ -143,6 +143,39 @@ export type SelectTemplateRequest = z.infer<typeof SelectTemplateRequestSchema>;
 export const ClaDocumentSourceSchema = z.enum(["repository", "default_template", "managed_template"]);
 export type ClaDocumentSource = z.infer<typeof ClaDocumentSourceSchema>;
 
+export const SigningContextSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  pull: z.string().nullable(),
+  sha: z.string().nullable()
+});
+export type SigningContext = z.infer<typeof SigningContextSchema>;
+
+export const SigningPageResponseSchema = z.object({
+  user: AdminUserSchema,
+  repository: z.object({
+    owner: z.string(),
+    name: z.string(),
+    fullName: z.string()
+  }),
+  cla: z.object({
+    documentId: z.string(),
+    title: z.string(),
+    body: z.string(),
+    versionHash: z.string(),
+    source: ClaDocumentSourceSchema
+  }),
+  context: SigningContextSchema
+});
+export type SigningPageResponse = z.infer<typeof SigningPageResponseSchema>;
+
+export const SigningSubmitResponseSchema = z.object({
+  ok: z.boolean(),
+  message: z.string(),
+  context: SigningContextSchema
+});
+export type SigningSubmitResponse = z.infer<typeof SigningSubmitResponseSchema>;
+
 export const SignatureRecordSchema = z.object({
   kind: z.enum(["personal", "corporate"]),
   signerLogin: z.string(),

@@ -81,7 +81,7 @@ export async function handlePullRequestWebhook(params: {
   });
 
   const detailsUrl = buildSigningUrl({
-    publicAppUrl: params.config.PUBLIC_APP_URL,
+    webAppUrl: params.config.ADMIN_WEB_URL,
     owner,
     repo,
     pull: pullNumber,
@@ -352,13 +352,13 @@ async function updatePullRequestComment(params: {
 }
 
 function buildSigningUrl(params: {
-  publicAppUrl: string;
+  webAppUrl: string;
   owner: string;
   repo: string;
   pull: number;
   sha: string;
 }): string {
-  const url = new URL("/sign", params.publicAppUrl);
+  const url = new URL("/sign", params.webAppUrl);
   url.searchParams.set("owner", params.owner);
   url.searchParams.set("repo", params.repo);
   url.searchParams.set("pull", String(params.pull));
