@@ -17,7 +17,7 @@ COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_module
 COPY . .
 RUN pnpm --filter @superagent-cla/shared build
 RUN pnpm --filter @superagent-cla/api build
-RUN pnpm prune --prod
+RUN CI=true pnpm prune --prod
 
 FROM node:22-slim AS runtime
 WORKDIR /app
