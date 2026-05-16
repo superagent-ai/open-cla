@@ -1,4 +1,3 @@
-import type { App } from "@octokit/app";
 import {
   CreateGlobalTemplateRequestSchema,
   CreateTemplateRequestSchema,
@@ -15,7 +14,6 @@ import {
 } from "@superagent-cla/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import type { AppConfig } from "../config.js";
 import type { DbClient } from "../db/client.js";
 import {
   claDocuments,
@@ -30,7 +28,7 @@ import {
   type ClaTemplate,
   type ClaTemplateVersion
 } from "../db/schema.js";
-import { getDefaultTemplate } from "../cla/templates.js";
+import { listDefaultTemplates, type DefaultClaTemplate } from "../cla/templates.js";
 import { createId } from "../utils/ids.js";
 import { sha256 } from "../utils/sha.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
@@ -44,8 +42,6 @@ export async function registerAdminRoutes(
   app: FastifyInstance,
   params: {
     db: DbClient;
-    githubApp: App;
-    config: AppConfig;
   }
 ): Promise<void> {
   app.get("/api/admin/me", async (request, reply) => {
@@ -106,10 +102,7 @@ export async function registerAdminRoutes(
       return;
     }
 
-    const templates = await listTemplatesForRepository(params.db, {
-      repositoryId,
-      defaultTemplateName: params.config.DEFAULT_CLA_TEMPLATE_NAME
-    });
+    const templates = await listTemplatesForRepository(params.db, { repositoryId });
     const settings = await getRepositoryTemplateSettings(params.db, repositoryId);
 
     return {
@@ -186,7 +179,7 @@ export async function registerAdminRoutes(
       return;
     }
 
-    await ensureDefaultTemplate(params.db, params.config.DEFAULT_CLA_TEMPLATE_NAME);
+    await ensureDefaultTemplates(params.db);
 
     const allTemplates = await params.db.query.claTemplates.findMany({
       where: (table, { and, eq, isNull, or }) =>
@@ -536,10 +529,9 @@ async function listTemplatesForRepository(
   db: DbClient,
   params: {
     repositoryId: string;
-    defaultTemplateName: string;
   }
 ): Promise<TemplateSummary[]> {
-  const defaultTemplate = await ensureDefaultTemplate(db, params.defaultTemplateName);
+  const defaultTemplates = await ensureDefaultTemplates(db);
   const [perRepoTemplates, globalCustomTemplates] = await Promise.all([
     db.query.claTemplates.findMany({
       where: (table) => eq(table.repositoryId, params.repositoryId)
@@ -550,20 +542,39 @@ async function listTemplatesForRepository(
     })
   ]);
 
-  const templates = [defaultTemplate, ...globalCustomTemplates, ...perRepoTemplates];
+  const templates = [...defaultTemplates, ...globalCustomTemplates, ...perRepoTemplates];
   return Promise.all(templates.map((template) => toTemplateSummary(db, template)));
 }
 
-async function ensureDefaultTemplate(
-  db: DbClient,
-  defaultTemplateName: string
-): Promise<ClaTemplate> {
-  const defaultTemplate = getDefaultTemplate(defaultTemplateName);
+async function ensureDefaultTemplates(db: DbClient): Promise<ClaTemplate[]> {
+  const templates: ClaTemplate[] = [];
+  for (const defaultTemplate of listDefaultTemplates()) {
+    templates.push(await ensureDefaultTemplate(db, defaultTemplate));
+  }
+  return templates;
+}
+
+async function ensureDefaultTemplate(db: DbClient, defaultTemplate: DefaultClaTemplate): Promise<ClaTemplate> {
   const existing = await db.query.claTemplates.findFirst({
     where: (table) =>
       and(eq(table.source, "default"), eq(table.name, defaultTemplate.name), isNull(table.repositoryId))
   });
-  const template = existing ?? (await createDefaultTemplate(db, defaultTemplate));
+  let template = existing ?? (await createDefaultTemplate(db, defaultTemplate));
+
+  if (existing && existing.description !== defaultTemplate.description) {
+    await db
+      .update(claTemplates)
+      .set({
+        description: defaultTemplate.description,
+        updatedAt: new Date()
+      })
+      .where(eq(claTemplates.claTemplateId, existing.claTemplateId));
+    template = {
+      ...existing,
+      description: defaultTemplate.description,
+      updatedAt: new Date()
+    };
+  }
 
   const versionHash = sha256(defaultTemplate.body);
   const existingVersion = await db.query.claTemplateVersions.findFirst({
@@ -585,7 +596,7 @@ async function ensureDefaultTemplate(
 
 async function createDefaultTemplate(
   db: DbClient,
-  template: { name: string; title: string; body: string }
+  template: DefaultClaTemplate
 ): Promise<ClaTemplate> {
   const [created] = await db
     .insert(claTemplates)
@@ -594,7 +605,7 @@ async function createDefaultTemplate(
       repositoryId: null,
       source: "default",
       name: template.name,
-      description: "Bundled default CLA template"
+      description: template.description
     })
     .returning();
 

@@ -8,6 +8,21 @@ OpenCLA resolves the active CLA for a repository from your managed template conf
 
 Global templates are created and listed under the **Templates** area of the admin app (`/templates`). They are shared definitions you can attach to multiple repositories.
 
+## Built-in templates
+
+OpenCLA includes bundled starter templates for common contribution policies:
+
+- **Standard Contributor License Agreement** (`standard-combined-v1`): balanced default for personal and organization signing.
+- **Inbound = Outbound Contribution Agreement** (`inbound-outbound-v1`): lightweight policy that uses the project's outbound license for inbound contributions.
+- **Copyright-Only Contributor License Agreement** (`copyright-only-v1`): copyright grant without an express patent grant.
+- **Patent Grant Contributor License Agreement** (`patent-grant-v1`): copyright and patent grants with defensive termination.
+- **Organization Contributor License Agreement** (`organization-covered-v1`): organization owner signing for authorized contributors.
+- **Documentation and Content Contribution Agreement** (`docs-content-v1`): non-code content, docs, websites, tutorials, and media.
+- **Experimental and Research Contribution Agreement** (`experimental-research-v1`): notebooks, datasets, models, benchmarks, and research artifacts.
+- **Individual Contributor License Agreement** (`individual-v1`): individual-only CLA retained for compatibility with older deployments.
+
+These templates are useful starting points, not legal advice. Review the selected template with counsel before relying on it in production.
+
 ## Creating a template
 
 1. Sign in to the admin app with a GitHub account that has access to manage templates (per your deployment).
@@ -21,7 +36,7 @@ Use clear titles so admins can recognize versions in the dashboard.
 1. From the main dashboard, select the installed **repository** you want to configure.
 2. Pick the template version that should apply. The API persists that selection for future check runs.
 
-Repositories without a selection may fall back to deployment defaults depending on your `DEFAULT_CLA_TEMPLATE_NAME` configuration—confirm with your operator for hosted vs self-hosted behavior.
+Repositories without a repository `CLA.md` or managed template selection fall back to the template named by `DEFAULT_CLA_TEMPLATE_NAME`. New deployments default to `standard-combined-v1`.
 
 ## Versions and the CLA hash
 

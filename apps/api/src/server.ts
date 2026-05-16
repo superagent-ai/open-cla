@@ -65,7 +65,7 @@ export async function buildServer(dependencies: ServerDependencies = {}): Promis
 
   await registerWebhookRoutes(app, { db, githubApp, webhooks, config });
   await registerAuthRoutes(app, { db, oauthApp, config });
-  await registerAdminRoutes(app, { db, githubApp, config });
+  await registerAdminRoutes(app, { db });
   await registerSignRoutes(app, { db, githubApp, config });
 
   app.setErrorHandler((error, _request, reply) => {

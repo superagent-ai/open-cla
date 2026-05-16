@@ -25,7 +25,7 @@ describe("resolveClaForRepository", () => {
       owner: "owner",
       repo: "repo",
       repositoryId: "100",
-      defaultTemplateName: "individual-v1"
+      defaultTemplateName: "standard-combined-v1"
     });
 
     expect(result.source).toBe("managed_template");
@@ -41,7 +41,7 @@ describe("resolveClaForRepository", () => {
       owner: "owner",
       repo: "repo",
       repositoryId: "100",
-      defaultTemplateName: "individual-v1"
+      defaultTemplateName: "standard-combined-v1"
     });
 
     expect(result.source).toBe("repository");
@@ -56,7 +56,7 @@ describe("resolveClaForRepository", () => {
       owner: "owner",
       repo: "repo",
       repositoryId: "100",
-      defaultTemplateName: "individual-v1"
+      defaultTemplateName: "standard-combined-v1"
     });
 
     expect(result.source).toBe("default_template");
