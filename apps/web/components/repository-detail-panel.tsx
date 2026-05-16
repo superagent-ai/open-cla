@@ -57,7 +57,7 @@ export function RepositoryDetailPanel({
 }: RepositoryDetailPanelProps) {
   const repo = templatesResponse.repository;
   const settings = templatesResponse.settings;
-  const { defaultTemplate, globalCustomTemplates, repoCustomTemplates } = useMemo(
+  const { defaultTemplates, globalCustomTemplates, repoCustomTemplates } = useMemo(
     () => splitTemplates(templatesResponse.templates, repo.repositoryId),
     [templatesResponse.templates, repo.repositoryId]
   );
@@ -124,7 +124,7 @@ export function RepositoryDetailPanel({
         <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-tight">CLA policy</h2>
           <p className="text-sm text-muted-foreground">
-            CLA.md, built‑in default, or latest uploaded template.{" "}
+            CLA.md, built‑in defaults, or latest uploaded template.{" "}
             <Link className="font-medium text-foreground underline underline-offset-4 hover:no-underline" href="/templates">
               Manage templates
             </Link>
@@ -134,7 +134,7 @@ export function RepositoryDetailPanel({
 
         <div className="flex items-center gap-2">
           <ClaPolicySearchableSelect
-            defaultTemplate={defaultTemplate}
+            defaultTemplates={defaultTemplates}
             globalCustomTemplates={globalCustomTemplates}
             isRepositoryFilePolicy={isRepositoryFilePolicy}
             managedVersionId={managedVersionId}
@@ -287,7 +287,7 @@ function ClaPolicySearchableSelect({
   managedVersionId,
   pending,
   settings,
-  defaultTemplate,
+  defaultTemplates,
   globalCustomTemplates,
   repoCustomTemplates,
   onSelectTemplate
@@ -296,15 +296,12 @@ function ClaPolicySearchableSelect({
   managedVersionId: string | null;
   pending: boolean;
   settings: TemplatesResponse["settings"];
-  defaultTemplate: TemplateSummary | null;
+  defaultTemplates: TemplateSummary[];
   globalCustomTemplates: TemplateSummary[];
   repoCustomTemplates: TemplateSummary[];
   onSelectTemplate: (templateVersionId: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-
-  const defaultVersionId = defaultTemplate?.latestVersion?.templateVersionId ?? null;
-  const defaultPickable = !!defaultVersionId;
 
   const triggerLabel = useMemo(() => {
     if (isRepositoryFilePolicy) return "Repository CLA.md";
@@ -364,23 +361,35 @@ function ClaPolicySearchableSelect({
 
             <CommandSeparator />
 
-            <CommandGroup heading="Built-in default">
-              {defaultPickable ? (
-                <CommandItem
-                  data-checked={isVersionPolicyActive(defaultVersionId!)}
-                  onSelect={(v) => applyActionKey(parseClaPolicyCmdValue(v))}
-                  value={claPolicyCmdValue(
-                    `${defaultTemplate!.name} built-in default bundled ${defaultTemplate!.description ?? ""}`,
-                    `v:${defaultVersionId}`
-                  )}
-                >
-                  <span className="min-w-0">{defaultTemplate!.name}</span>
-                </CommandItem>
+            <CommandGroup heading="Built-in defaults">
+              {defaultTemplates.length > 0 ? (
+                defaultTemplates.map((template) => {
+                  const versionId = template.latestVersion?.templateVersionId;
+                  if (!versionId) {
+                    return (
+                      <CommandItem disabled key={template.templateId} value={`no-version-default-${template.templateId}`}>
+                        {template.name} (no version)
+                      </CommandItem>
+                    );
+                  }
+
+                  return (
+                    <CommandItem
+                      key={template.templateId}
+                      data-checked={isVersionPolicyActive(versionId)}
+                      onSelect={(v) => applyActionKey(parseClaPolicyCmdValue(v))}
+                      value={claPolicyCmdValue(
+                        `${template.name} built-in default bundled ${template.description ?? ""}`,
+                        `v:${versionId}`
+                      )}
+                    >
+                      <span className="min-w-0">{template.name}</span>
+                    </CommandItem>
+                  );
+                })
               ) : (
                 <CommandItem disabled value="built-in-default-unavailable-not-configured">
-                  {defaultTemplate && !defaultTemplate.latestVersion
-                    ? `${defaultTemplate.name} (no version)`
-                    : "Built-in default not available"}
+                  Built-in defaults not available
                 </CommandItem>
               )}
             </CommandGroup>
@@ -454,14 +463,15 @@ function ClaPolicySearchableSelect({
 }
 
 function splitTemplates(templates: TemplateSummary[], repositoryId: string) {
-  const defaultTemplate =
-    templates.find((template) => template.source === "default" && template.repositoryId === null) ?? null;
+  const defaultTemplates = templates.filter(
+    (template) => template.source === "default" && template.repositoryId === null
+  );
 
   const customRest = templates.filter((template) => template.source !== "default");
   const globalCustomTemplates = customRest.filter((template) => template.repositoryId === null);
   const repoCustomTemplates = customRest.filter((template) => template.repositoryId === repositoryId);
 
-  return { defaultTemplate, globalCustomTemplates, repoCustomTemplates };
+  return { defaultTemplates, globalCustomTemplates, repoCustomTemplates };
 }
 
 function groupSignatures(signatures: SignatureRecord[]): {

@@ -19,7 +19,7 @@ const envSchema = z.object({
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
   SESSION_SECRET: z.string().min(32),
   COOKIE_DOMAIN: z.string().min(1).optional(),
-  DEFAULT_CLA_TEMPLATE_NAME: z.string().default("individual-v1")
+  DEFAULT_CLA_TEMPLATE_NAME: z.string().default("standard-combined-v1")
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

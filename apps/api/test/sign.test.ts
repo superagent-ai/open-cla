@@ -17,7 +17,7 @@ const config: AppConfig = {
   GITHUB_CLIENT_ID: "client-id",
   GITHUB_CLIENT_SECRET: "client-secret",
   SESSION_SECRET: "test-secret-that-is-at-least-32-bytes",
-  DEFAULT_CLA_TEMPLATE_NAME: "individual-v1"
+  DEFAULT_CLA_TEMPLATE_NAME: "standard-combined-v1"
 };
 
 describe("sign routes", () => {
