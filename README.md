@@ -1,6 +1,6 @@
 # OpenCLA
 
-TypeScript monorepo for a GitHub App that enforces Contributor License Agreement coverage and an admin UI for managing CLA templates and signatures.
+Open-source CLA platform: GitHub App PR checks, PDF templates, and e-sign for contributor agreements.
 
 ## Workspace Layout
 
