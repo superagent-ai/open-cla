@@ -12,6 +12,7 @@ import { DocsSearch } from "@/components/docs-search";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchCommand } from "@/components/search-command";
 import { SiteFooter } from "@/components/site-footer";
+import { logoutAction } from "@/lib/actions/auth";
 import { githubLoginUrl } from "@/lib/api-public";
 import type { ChangelogSearchItem } from "@/lib/changelog";
 import type { DocSearchItem } from "@/lib/docs";
@@ -51,7 +52,6 @@ export function DashboardShell({
   const isDocsActive = pathname === "/docs" || pathname.startsWith("/docs/");
   const loginReturnTo = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
   const [themeMounted, setThemeMounted] = useState(false);
-  const [pending, setPending] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
@@ -75,19 +75,6 @@ export function DashboardShell({
   }, [docsLikeHeader]);
 
   const currentTheme = themeMounted ? theme : undefined;
-
-  async function logout() {
-    setPending(true);
-    try {
-      await fetch(`${apiBaseUrl}/auth/logout`, {
-        method: "POST",
-        credentials: "include"
-      });
-      window.location.href = "/";
-    } catch {
-      setPending(false);
-    }
-  }
 
   return (
     <main className="flex min-h-screen flex-col bg-background text-foreground">
@@ -164,7 +151,6 @@ export function DashboardShell({
                   <button
                     aria-label="Open account menu"
                     className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-secondary"
-                    disabled={pending}
                     type="button"
                   >
                     {user.avatarUrl ? (
@@ -249,14 +235,14 @@ export function DashboardShell({
                   Documentation
                 </Link>
                 <div className="h-px bg-border" />
-                <button
-                  className="flex w-full items-center px-4 py-3 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
-                  disabled={pending}
-                  onClick={() => void logout()}
-                  type="button"
-                >
-                  Log out
-                </button>
+                <form action={logoutAction}>
+                  <button
+                    className="flex w-full items-center px-4 py-3 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                    type="submit"
+                  >
+                    Log out
+                  </button>
+                </form>
                 <div className="h-px bg-border" />
                 <div className="flex items-center gap-3 px-4 py-3 text-sm text-muted-foreground">
                   <a href="https://www.superagent.sh/legal/privacy-policy">Privacy</a>

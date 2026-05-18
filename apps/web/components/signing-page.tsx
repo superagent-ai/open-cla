@@ -1,10 +1,14 @@
 "use client";
 
 import type { SigningPageResponse } from "@superagent-cla/shared";
+import { Check, PenLine } from "lucide-react";
 import { useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { signCorporateAction, signPersonalAction } from "@/lib/actions/signing";
+
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,6 +23,8 @@ import { cn } from "@/lib/utils";
 type SigningPageProps = {
   signing: SigningPageResponse;
   signedKind?: "personal" | "corporate" | null;
+  dropboxSignedKind?: "personal" | "corporate" | null;
+  dropboxEmailSentKind?: "personal" | "corporate" | null;
   error?: string | null;
 };
 
@@ -75,8 +81,16 @@ const markdownComponents: Components = {
   )
 };
 
-export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
+export function SigningPage({
+  signing,
+  signedKind,
+  dropboxSignedKind,
+  dropboxEmailSentKind,
+  error
+}: SigningPageProps) {
   const [signingKind, setSigningKind] = useState<SigningKind | null>(signedKind ?? null);
+  const requiresDropboxSign = signing.signingMode === "dropbox_sign";
+  const signingDisabled = requiresDropboxSign && !signing.dropboxSignConfigured;
 
   return (
     <>
@@ -114,6 +128,30 @@ export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
             />
           ) : null}
 
+          {dropboxEmailSentKind ? (
+            <StatusMessage
+              tone="success"
+              title="Check your email"
+              message={
+                dropboxEmailSentKind === "personal"
+                  ? "Dropbox Sign emailed you a signing link. Open it to complete your CLA, then return here or to your pull request."
+                  : "Dropbox Sign emailed you a signing link. Open it to complete the corporate CLA, then return here or to your pull request."
+              }
+            />
+          ) : null}
+
+          {dropboxSignedKind ? (
+            <StatusMessage
+              tone="success"
+              title="Signature submitted"
+              message={
+                dropboxSignedKind === "personal"
+                  ? "Dropbox Sign received your signature. CLA coverage will update shortly and your pull request check will re-run."
+                  : "Dropbox Sign received the corporate signature. CLA coverage will update shortly and your pull request check will re-run."
+              }
+            />
+          ) : null}
+
           {error ? (
             <StatusMessage tone="error" title="Unable to record signature" message={error} />
           ) : null}
@@ -133,20 +171,53 @@ export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
               </CardContent>
             </Card>
 
-            <Card className="lg:sticky lg:top-8">
-              <CardHeader>
-                <CardTitle>Sign agreement</CardTitle>
-                <p className="text-sm text-muted-foreground">Choose how you are signing before continuing.</p>
+            <Card
+              className={cn(
+                "lg:sticky lg:top-8",
+                requiresDropboxSign &&
+                  "border-teal-200/60 shadow-md shadow-teal-600/5 dark:border-teal-800/40 dark:shadow-teal-950/20"
+              )}
+            >
+              <CardHeader className="space-y-3">
+                {requiresDropboxSign ? (
+                  <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-500/10 px-2.5 py-1 text-xs font-medium text-teal-900 dark:border-teal-700/60 dark:bg-teal-500/15 dark:text-teal-100">
+                    <PenLine className="size-3.5 shrink-0" aria-hidden />
+                    Dropbox Sign required
+                  </span>
+                ) : null}
+                <div className="space-y-1.5">
+                  <CardTitle>Sign agreement</CardTitle>
+                  <p className="text-sm leading-relaxed text-muted-foreground">
+                    {requiresDropboxSign
+                      ? "Dropbox Sign will email you a signing link after you continue. Complete the signature from that email."
+                      : "Choose how you are signing before continuing."}
+                  </p>
+                </div>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div className="grid gap-3">
+                {signingDisabled ? (
+                  <StatusMessage
+                    tone="error"
+                    title="Dropbox Sign unavailable"
+                    message="This repository requires Dropbox Sign, but the deployment is not configured for it."
+                  />
+                ) : null}
+
+                <div
+                  className={cn(
+                    "grid gap-2.5",
+                    requiresDropboxSign && "rounded-xl bg-teal-500/[0.04] p-2 ring-1 ring-inset ring-teal-500/10"
+                  )}
+                >
                   <SigningChoiceButton
+                    accent={requiresDropboxSign}
                     active={signingKind === "personal"}
                     description="I am signing as my GitHub user account."
                     label="Personal"
                     onClick={() => setSigningKind("personal")}
                   />
                   <SigningChoiceButton
+                    accent={requiresDropboxSign}
                     active={signingKind === "corporate"}
                     description="I am authorized to sign for an organization."
                     label="Organization"
@@ -154,21 +225,36 @@ export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
                   />
                 </div>
 
-                <div className="border-t pt-5">
+                <div className={cn("border-t pt-5", requiresDropboxSign && "border-teal-200/40 dark:border-teal-800/30")}>
                   {signingKind === "personal" ? (
-                    <form action="/sign/personal" method="post" className="space-y-4">
+                    <form action={signPersonalAction} className="space-y-4">
                       <HiddenSigningFields signing={signing} />
+                      {requiresDropboxSign ? <SignerEmailField /> : null}
                       <p className="text-sm text-muted-foreground">
-                        This records a CLA signature for <span className="font-medium text-foreground">@{signing.user.login}</span>.
+                        {requiresDropboxSign ? (
+                          <>
+                            Dropbox Sign will collect the auditable e-signature for{" "}
+                            <span className="font-medium text-foreground">@{signing.user.login}</span>.
+                          </>
+                        ) : (
+                          <>
+                            This records a CLA signature for{" "}
+                            <span className="font-medium text-foreground">@{signing.user.login}</span>.
+                          </>
+                        )}
                       </p>
-                      <Button className="w-full" type="submit">
-                        I agree and sign personally
-                      </Button>
+                      <SubmitButton
+                        className="w-full"
+                        disabled={signingDisabled}
+                        pendingLabel={requiresDropboxSign ? "Continuing…" : "Signing…"}
+                      >
+                        {requiresDropboxSign ? "Email me a signing link" : "I agree and sign personally"}
+                      </SubmitButton>
                     </form>
                   ) : null}
 
                   {signingKind === "corporate" ? (
-                    <form action="/sign/corporate" method="post" className="space-y-4">
+                    <form action={signCorporateAction} className="space-y-4">
                       <HiddenSigningFields signing={signing} />
                       <div className="space-y-2">
                         <label className="text-sm font-medium text-foreground" htmlFor="orgLogin">
@@ -176,18 +262,27 @@ export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
                         </label>
                         <Input id="orgLogin" name="orgLogin" placeholder="acme" required />
                       </div>
+                      {requiresDropboxSign ? <SignerEmailField /> : null}
                       <p className="text-sm text-muted-foreground">
-                        GitHub will verify that you are an owner of this organization.
+                        {requiresDropboxSign
+                          ? "GitHub will verify that you are an owner of this organization before Dropbox Sign collects the signature."
+                          : "GitHub will verify that you are an owner of this organization."}
                       </p>
-                      <Button className="w-full" type="submit">
-                        I agree on behalf of this organization
-                      </Button>
+                      <SubmitButton
+                        className="w-full"
+                        disabled={signingDisabled}
+                        pendingLabel="Continuing…"
+                      >
+                        {requiresDropboxSign
+                          ? "Email me a signing link"
+                          : "I agree on behalf of this organization"}
+                      </SubmitButton>
                     </form>
                   ) : null}
 
                   {!signingKind ? (
-                    <p className="text-sm text-muted-foreground">
-                      Select a signing type above to see the required confirmation.
+                    <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-center text-sm text-muted-foreground">
+                      Select a signing type above to continue.
                     </p>
                   ) : null}
                 </div>
@@ -202,11 +297,13 @@ export function SigningPage({ signing, signedKind, error }: SigningPageProps) {
 }
 
 function SigningChoiceButton({
+  accent,
   active,
   description,
   label,
   onClick
 }: {
+  accent?: boolean;
   active: boolean;
   description: string;
   label: string;
@@ -216,16 +313,37 @@ function SigningChoiceButton({
     <button
       aria-pressed={active}
       className={cn(
-        "rounded-xl border px-4 py-3 text-left transition-colors",
-        active
-          ? "border-ring bg-secondary text-foreground ring-3 ring-ring/20"
-          : "border-border bg-background hover:bg-muted/60"
+        "w-full rounded-xl border px-4 py-3 text-left transition-all",
+        accent
+          ? active
+            ? "border-teal-600/35 bg-card shadow-sm ring-2 ring-teal-500/25 dark:border-teal-500/40 dark:ring-teal-500/20"
+            : "border-border/70 bg-card/80 hover:border-teal-500/25 hover:bg-card"
+          : active
+            ? "border-ring bg-secondary text-foreground ring-3 ring-ring/20"
+            : "border-border bg-background hover:bg-muted/60"
       )}
       onClick={onClick}
       type="button"
     >
-      <span className="block text-sm font-medium">{label}</span>
-      <span className="mt-1 block text-sm text-muted-foreground">{description}</span>
+      <span className="flex items-start justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">{label}</span>
+          <span className="mt-1 block text-sm leading-snug text-muted-foreground">{description}</span>
+        </span>
+        <span
+          className={cn(
+            "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors",
+            active
+              ? accent
+                ? "border-teal-600 bg-teal-600 text-white dark:border-teal-500 dark:bg-teal-500"
+                : "border-emerald-500 bg-emerald-500 text-white"
+              : "border-border bg-background"
+          )}
+          aria-hidden
+        >
+          {active ? <Check className="size-3.5" /> : null}
+        </span>
+      </span>
     </button>
   );
 }
@@ -235,11 +353,33 @@ function HiddenSigningFields({ signing }: { signing: SigningPageResponse }) {
     <>
       <input name="claDocumentId" type="hidden" value={signing.cla.documentId} />
       <input name="claVersionHash" type="hidden" value={signing.cla.versionHash} />
+      <input name="claTitle" type="hidden" value={signing.cla.title} />
       <input name="owner" type="hidden" value={signing.context.owner} />
       <input name="repo" type="hidden" value={signing.context.repo} />
       <input name="pull" type="hidden" value={signing.context.pull ?? ""} />
       <input name="sha" type="hidden" value={signing.context.sha ?? ""} />
     </>
+  );
+}
+
+function SignerEmailField() {
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium text-foreground" htmlFor="signerEmail">
+        Email for Dropbox Sign
+      </label>
+      <Input
+        className="bg-background"
+        id="signerEmail"
+        name="signerEmail"
+        placeholder="you@example.com"
+        required
+        type="email"
+      />
+      <p className="text-xs leading-5 text-muted-foreground">
+        Dropbox Sign requires an email address for the signer record and audit trail.
+      </p>
+    </div>
   );
 }
 

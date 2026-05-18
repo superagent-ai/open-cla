@@ -1,9 +1,8 @@
 "use client";
 
 import type { AdminUser, GlobalTemplateSummary } from "@superagent-cla/shared";
-import { Copy, Loader2, MoreHorizontal, Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { Copy, MoreHorizontal, Trash2 } from "lucide-react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { Toaster } from "sonner";
 
 import { DashboardShell } from "@/components/dashboard-shell";
@@ -34,6 +33,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
+import { SubmitButton } from "@/components/ui/submit-button";
+import {
+  deleteTemplateAction,
+  duplicateTemplateAction,
+  updateTemplateAction
+} from "@/lib/actions/templates";
+import { emptyActionResult } from "@/lib/actions/types";
 
 type TemplateEditDashboardProps = {
   apiBaseUrl: string;
@@ -50,106 +56,39 @@ export function TemplateEditDashboard({
   template,
   body
 }: TemplateEditDashboardProps) {
-  const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [markdown, setMarkdown] = useState<string>(body);
+  const [markdown, setMarkdown] = useState(body);
+  const [saved, setSaved] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const updateAction = updateTemplateAction.bind(null, templateId);
+  const [state, formAction, savePending] = useActionState(updateAction, emptyActionResult());
+  const wasSavingRef = useRef(false);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
+  const pending = isPending || savePending;
+  const error = actionError ?? state.error;
 
-    const title = String(form.get("title") ?? "").trim();
-    if (!title) {
-      setError("Title is required.");
-      return;
+  useEffect(() => {
+    if (wasSavingRef.current && !savePending && !state.error) {
+      setSaved(true);
     }
+    wasSavingRef.current = savePending;
+  }, [savePending, state.error]);
 
-    const trimmedBody = markdown.trim();
-    if (!trimmedBody) {
-      setError("Template body cannot be empty.");
-      return;
-    }
-
-    setPending(true);
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/admin/templates/${templateId}`, {
-        method: "PUT",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: title,
-          description: String(form.get("description") ?? ""),
-          title,
-          body: trimmedBody
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(await getResponseError(response));
+  function runAction(work: () => Promise<void>): void {
+    setActionError(null);
+    startTransition(async () => {
+      try {
+        await work();
+      } catch (caught) {
+        setActionError(caught instanceof Error ? caught.message : "Request failed");
       }
-
-      setPending(false);
-      setSaving(false);
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to save template");
-      setPending(false);
-      setSaving(false);
-    }
-  }
-
-  async function duplicateTemplate() {
-    setPending(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/admin/templates/${templateId}/duplicate`, {
-        method: "POST",
-        credentials: "include"
-      });
-
-      if (!response.ok) {
-        throw new Error(await getResponseError(response));
-      }
-
-      const payload = (await response.json()) as { templateId: string };
-      router.push(`/templates/${payload.templateId}/edit`);
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to duplicate template");
-      setPending(false);
-    }
-  }
-
-  async function deleteTemplate() {
-    setPending(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/admin/templates/${templateId}`, {
-        method: "DELETE",
-        credentials: "include"
-      });
-
-      if (!response.ok) {
-        throw new Error(await getResponseError(response));
-      }
-
-      router.push("/templates");
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to delete template");
-      setPending(false);
-      setDeleteOpen(false);
-    }
+    });
   }
 
   return (
     <DashboardShell apiBaseUrl={apiBaseUrl} user={user}>
-      <form className="flex flex-col gap-6" onSubmit={(event) => void submit(event)}>
+      <form action={formAction} className="flex flex-col gap-6">
         <div className="flex items-center justify-between gap-4">
           <Breadcrumb>
             <BreadcrumbList>
@@ -178,7 +117,11 @@ export function TemplateEditDashboard({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-40">
-                  <DropdownMenuItem onSelect={() => void duplicateTemplate()}>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      runAction(() => duplicateTemplateAction(templateId))
+                    }
+                  >
                     <Copy className="h-4 w-4" />
                     Duplicate
                   </DropdownMenuItem>
@@ -207,7 +150,7 @@ export function TemplateEditDashboard({
                     disabled={pending}
                     onClick={(event) => {
                       event.preventDefault();
-                      void deleteTemplate();
+                      runAction(() => deleteTemplateAction(templateId));
                     }}
                     variant="destructive"
                   >
@@ -216,16 +159,15 @@ export function TemplateEditDashboard({
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-            <Button
+            <SubmitButton
               className="-ml-px !rounded-l-none"
               disabled={pending}
+              pendingLabel="Saving…"
               size="sm"
-              type="submit"
               variant="outline"
             >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               Save
-            </Button>
+            </SubmitButton>
           </ButtonGroup>
         </div>
 
@@ -233,6 +175,10 @@ export function TemplateEditDashboard({
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
           </div>
+        ) : null}
+
+        {saved && !error && !savePending ? (
+          <p className="text-sm text-muted-foreground">Template saved.</p>
         ) : null}
 
         <div className="space-y-2 px-1">
@@ -253,6 +199,8 @@ export function TemplateEditDashboard({
           />
         </div>
 
+        <input name="body" type="hidden" value={markdown} />
+
         <div className="overflow-hidden rounded-2xl border bg-card">
           <TemplatePlateEditor
             initialMarkdown={body}
@@ -264,19 +212,4 @@ export function TemplateEditDashboard({
       <Toaster />
     </DashboardShell>
   );
-}
-
-async function getResponseError(response: Response): Promise<string> {
-  const payload = (await response.json().catch(() => null)) as
-    | { error?: string; issues?: Array<{ path?: Array<string | number>; message?: string }> }
-    | null;
-  const detail = payload?.issues?.length
-    ? payload.issues
-        .map((issue) => `${issue.path?.join(".") ?? "field"}: ${issue.message ?? "invalid"}`)
-        .join("; ")
-    : null;
-
-  return detail
-    ? `${payload?.error ?? "Invalid request"} - ${detail}`
-    : payload?.error ?? `Request failed with ${response.status}`;
 }

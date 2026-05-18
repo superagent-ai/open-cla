@@ -32,6 +32,29 @@ export const repositoryTemplateMode = pgEnum("repository_template_mode", [
   "managed"
 ]);
 
+export const repositorySigningMode = pgEnum("repository_signing_mode", [
+  "simple",
+  "dropbox_sign"
+]);
+
+export const signatureRequestKind = pgEnum("signature_request_kind", [
+  "personal",
+  "corporate"
+]);
+
+export const signatureProvider = pgEnum("signature_provider", [
+  "dropbox_sign"
+]);
+
+export const signatureRequestStatus = pgEnum("signature_request_status", [
+  "pending",
+  "signed",
+  "completed",
+  "declined",
+  "expired",
+  "failed"
+]);
+
 export const checkConclusion = pgEnum("check_conclusion", [
   "success",
   "failure",
@@ -184,6 +207,53 @@ export const repositoryTemplateSettings = pgTable("repository_template_settings"
   ...timestamps
 });
 
+export const signingProviderIntegrations = pgTable(
+  "signing_provider_integrations",
+  {
+    signingProviderIntegrationId: text("signing_provider_integration_id").primaryKey(),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => repositories.repositoryId, { onDelete: "cascade" }),
+    provider: signatureProvider("provider").notNull(),
+    encryptedApiKey: text("encrypted_api_key").notNull(),
+    apiKeyLast4: text("api_key_last4"),
+    createdByGithubUserId: text("created_by_github_user_id").references(
+      () => githubUsers.githubUserId,
+      { onDelete: "set null" }
+    ),
+    createdByLogin: text("created_by_login"),
+    updatedByGithubUserId: text("updated_by_github_user_id").references(
+      () => githubUsers.githubUserId,
+      { onDelete: "set null" }
+    ),
+    updatedByLogin: text("updated_by_login"),
+    ...timestamps
+  },
+  (table) => ({
+    repositoryProviderUnique: uniqueIndex("signing_provider_integrations_repo_provider_unique").on(
+      table.repositoryId,
+      table.provider
+    )
+  })
+);
+
+export const repositorySigningSettings = pgTable("repository_signing_settings", {
+  repositoryId: text("repository_id")
+    .primaryKey()
+    .references(() => repositories.repositoryId, { onDelete: "cascade" }),
+  signingMode: repositorySigningMode("signing_mode").notNull().default("simple"),
+  signingProviderIntegrationId: text("signing_provider_integration_id").references(
+    () => signingProviderIntegrations.signingProviderIntegrationId,
+    { onDelete: "set null" }
+  ),
+  updatedByGithubUserId: text("updated_by_github_user_id").references(
+    () => githubUsers.githubUserId,
+    { onDelete: "set null" }
+  ),
+  updatedByLogin: text("updated_by_login"),
+  ...timestamps
+});
+
 export const personalSignatures = pgTable(
   "personal_signatures",
   {
@@ -239,6 +309,60 @@ export const corporateAgreements = pgTable(
   })
 );
 
+export const signatureRequests = pgTable(
+  "signature_requests",
+  {
+    signatureRequestId: text("signature_request_id").primaryKey(),
+    kind: signatureRequestKind("kind").notNull(),
+    provider: signatureProvider("provider").notNull(),
+    status: signatureRequestStatus("status").notNull().default("pending"),
+    signingProviderIntegrationId: text("signing_provider_integration_id")
+      .notNull()
+      .references(() => signingProviderIntegrations.signingProviderIntegrationId, {
+        onDelete: "restrict"
+      }),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => repositories.repositoryId, { onDelete: "cascade" }),
+    githubUserId: text("github_user_id")
+      .notNull()
+      .references(() => githubUsers.githubUserId, { onDelete: "cascade" }),
+    signerLogin: text("signer_login").notNull(),
+    signerEmail: text("signer_email").notNull(),
+    orgId: text("org_id"),
+    orgLogin: text("org_login"),
+    claDocumentId: text("cla_document_id")
+      .notNull()
+      .references(() => claDocuments.claDocumentId, { onDelete: "cascade" }),
+    claVersionHash: text("cla_version_hash").notNull(),
+    owner: text("owner").notNull(),
+    repo: text("repo").notNull(),
+    pull: text("pull"),
+    sha: text("sha"),
+    providerRequestId: text("provider_request_id"),
+    providerSignatureId: text("provider_signature_id"),
+    providerSignUrlExpiresAt: timestamp("provider_sign_url_expires_at", { withTimezone: true }),
+    auditTrailUrl: text("audit_trail_url"),
+    signedDocumentUrl: text("signed_document_url"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+    providerPayload: jsonb("provider_payload").$type<Record<string, unknown>>(),
+    ...timestamps
+  },
+  (table) => ({
+    providerRequestUnique: uniqueIndex("signature_requests_provider_request_unique").on(
+      table.provider,
+      table.providerRequestId
+    ),
+    providerSignatureIdx: index("signature_requests_provider_signature_idx").on(table.providerSignatureId),
+    repositoryStatusIdx: index("signature_requests_repository_status_idx").on(
+      table.repositoryId,
+      table.status
+    ),
+    userHashIdx: index("signature_requests_user_hash_idx").on(table.githubUserId, table.claVersionHash)
+  })
+);
+
 export const orgMembershipCache = pgTable(
   "org_membership_cache",
   {
@@ -282,5 +406,8 @@ export type ClaDocument = typeof claDocuments.$inferSelect;
 export type ClaTemplate = typeof claTemplates.$inferSelect;
 export type ClaTemplateVersion = typeof claTemplateVersions.$inferSelect;
 export type RepositoryTemplateSettings = typeof repositoryTemplateSettings.$inferSelect;
+export type RepositorySigningSettings = typeof repositorySigningSettings.$inferSelect;
+export type SigningProviderIntegration = typeof signingProviderIntegrations.$inferSelect;
 export type CorporateAgreement = typeof corporateAgreements.$inferSelect;
 export type PersonalSignature = typeof personalSignatures.$inferSelect;
+export type SignatureRequest = typeof signatureRequests.$inferSelect;

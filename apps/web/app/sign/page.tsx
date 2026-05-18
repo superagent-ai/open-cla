@@ -44,6 +44,8 @@ export default async function SignPage({ searchParams }: SignPageProps) {
     <SigningPage
       signing={signing}
       signedKind={signedKind(params.signed)}
+      dropboxSignedKind={signedKind(params.dropboxSigned)}
+      dropboxEmailSentKind={signedKind(params.dropboxEmailSent)}
       error={singleValue(params.error)}
     />
   );

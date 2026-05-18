@@ -152,6 +152,12 @@ function fakeDb() {
           claTemplateVersionId: "ver_1"
         })
       },
+      repositorySigningSettings: {
+        findFirst: async () => null
+      },
+      signingProviderIntegrations: {
+        findFirst: async () => null
+      },
       claTemplateVersions: {
         findFirst: async () => ({
           claTemplateVersionId: "ver_1",

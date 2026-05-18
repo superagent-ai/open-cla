@@ -1,12 +1,15 @@
 import {
   CreateGlobalTemplateRequestSchema,
   CreateTemplateRequestSchema,
+  SaveDropboxSignIntegrationRequestSchema,
+  SelectSigningModeRequestSchema,
   SelectTemplateRequestSchema,
   UpdateGlobalTemplateRequestSchema,
   type AdminInstallation,
   type AdminRepository,
   type GlobalTemplateSummary,
   type PullRequestCoverage,
+  type RepositorySigningSettings,
   type RepositoryTemplateSettings,
   type SignatureRecord,
   type TemplateSummary,
@@ -23,14 +26,18 @@ import {
   personalSignatures,
   pullRequestChecks,
   repositories,
+  repositorySigningSettings,
   repositoryTemplateSettings,
+  signingProviderIntegrations,
   type ClaDocument,
   type ClaTemplate,
   type ClaTemplateVersion
 } from "../db/schema.js";
+import type { AppConfig } from "../config.js";
 import { listDefaultTemplates, type DefaultClaTemplate } from "../cla/templates.js";
 import { createId } from "../utils/ids.js";
 import { sha256 } from "../utils/sha.js";
+import { encryptSigningCredential } from "../signing/credentials.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
 
 type AdminRepositoryContext = {
@@ -42,6 +49,7 @@ export async function registerAdminRoutes(
   app: FastifyInstance,
   params: {
     db: DbClient;
+    config: AppConfig;
   }
 ): Promise<void> {
   app.get("/api/admin/me", async (request, reply) => {
@@ -104,10 +112,12 @@ export async function registerAdminRoutes(
 
     const templates = await listTemplatesForRepository(params.db, { repositoryId });
     const settings = await getRepositoryTemplateSettings(params.db, repositoryId);
+    const signingSettings = await getRepositorySigningSettings(params.db, repositoryId, params.config);
 
     return {
       repository: toAdminRepository(context.repository, true),
       settings,
+      signingSettings,
       templates
     };
   });
@@ -158,7 +168,7 @@ export async function registerAdminRoutes(
     });
 
     return reply.code(201).send({
-      template: await toTemplateSummary(params.db, {
+      template: await toTemplateSummaryForDb(params.db, {
         claTemplateId: templateId,
         repositoryId: context.repository.repositoryId,
         source: "uploaded",
@@ -195,17 +205,22 @@ export async function registerAdminRoutes(
         )
     });
 
-    const summaries: GlobalTemplateSummary[] = await Promise.all(
-      allTemplates.map(async (template) => {
-        const summary = await toTemplateSummary(params.db, template);
-        return {
-          ...summary,
-          createdByLogin: template.createdByLogin,
-          createdAt: template.createdAt.toISOString(),
-          isMine: template.createdByGithubUserId === session.user.githubUserId
-        };
-      })
+    const latestVersions = await getLatestTemplateVersionsByTemplateIds(
+      params.db,
+      allTemplates.map((template) => template.claTemplateId)
     );
+    const summaries: GlobalTemplateSummary[] = allTemplates.map((template) => {
+      const summary = toTemplateSummary(
+        template,
+        latestVersions.get(template.claTemplateId) ?? null
+      );
+      return {
+        ...summary,
+        createdByLogin: template.createdByLogin,
+        createdAt: template.createdAt.toISOString(),
+        isMine: template.createdByGithubUserId === session.user.githubUserId
+      };
+    });
 
     summaries.sort((left, right) => {
       if (left.source !== right.source) {
@@ -264,7 +279,7 @@ export async function registerAdminRoutes(
       return reply.code(403).send({ error: "Template not accessible" });
     }
 
-    const summary = await toTemplateSummary(params.db, template);
+    const summary = await toTemplateSummaryForDb(params.db, template);
     return {
       template: {
         ...summary,
@@ -467,6 +482,60 @@ export async function registerAdminRoutes(
     };
   });
 
+  app.put("/api/admin/repositories/:repositoryId/signing-settings", async (request, reply) => {
+    const { repositoryId } = request.params as { repositoryId: string };
+    const body = SelectSigningModeRequestSchema.parse({
+      ...(request.body as Record<string, unknown>),
+      repositoryId
+    });
+    const context = await requireAdminRepository(params, request, reply, repositoryId);
+    if (!context) {
+      return;
+    }
+
+    if (body.signingMode === "dropbox_sign") {
+      const integration = await getDropboxSignIntegration(params.db, repositoryId);
+      if (!integration) {
+        return reply.code(400).send({ error: "Add Dropbox Sign credentials before enabling this mode" });
+      }
+    }
+
+    await selectSigningMode({
+      db: params.db,
+      repositoryId,
+      signingMode: body.signingMode,
+      session: context.session
+    });
+
+    return {
+      signingSettings: await getRepositorySigningSettings(params.db, repositoryId, params.config)
+    };
+  });
+
+  app.put("/api/admin/repositories/:repositoryId/dropbox-sign-integration", async (request, reply) => {
+    const { repositoryId } = request.params as { repositoryId: string };
+    const body = SaveDropboxSignIntegrationRequestSchema.parse({
+      ...(request.body as Record<string, unknown>),
+      repositoryId
+    });
+    const context = await requireAdminRepository(params, request, reply, repositoryId);
+    if (!context) {
+      return;
+    }
+
+    await saveDropboxSignIntegration({
+      db: params.db,
+      config: params.config,
+      repositoryId,
+      apiKey: body.apiKey,
+      session: context.session
+    });
+
+    return {
+      signingSettings: await getRepositorySigningSettings(params.db, repositoryId, params.config)
+    };
+  });
+
   app.get("/api/admin/repositories/:repositoryId/signatures", async (request, reply) => {
     const { repositoryId } = request.params as { repositoryId: string };
     const context = await requireAdminRepository(params, request, reply, repositoryId);
@@ -543,7 +612,14 @@ async function listTemplatesForRepository(
   ]);
 
   const templates = [...defaultTemplates, ...globalCustomTemplates, ...perRepoTemplates];
-  return Promise.all(templates.map((template) => toTemplateSummary(db, template)));
+  const latestVersions = await getLatestTemplateVersionsByTemplateIds(
+    db,
+    templates.map((template) => template.claTemplateId)
+  );
+
+  return templates.map((template) =>
+    toTemplateSummary(template, latestVersions.get(template.claTemplateId) ?? null)
+  );
 }
 
 async function ensureDefaultTemplates(db: DbClient): Promise<ClaTemplate[]> {
@@ -616,12 +692,18 @@ async function createDefaultTemplate(
   return created;
 }
 
-async function toTemplateSummary(
+async function toTemplateSummaryForDb(
   db: DbClient,
   template: ClaTemplate
 ): Promise<TemplateSummary> {
   const latestVersion = await getLatestTemplateVersion(db, template.claTemplateId);
+  return toTemplateSummary(template, latestVersion);
+}
 
+function toTemplateSummary(
+  template: ClaTemplate,
+  latestVersion: ClaTemplateVersion | null
+): TemplateSummary {
   return {
     templateId: template.claTemplateId,
     name: template.name,
@@ -632,15 +714,35 @@ async function toTemplateSummary(
   };
 }
 
+async function getLatestTemplateVersionsByTemplateIds(
+  db: DbClient,
+  templateIds: string[]
+): Promise<Map<string, ClaTemplateVersion>> {
+  if (templateIds.length === 0) {
+    return new Map();
+  }
+
+  const versions = await db.query.claTemplateVersions.findMany({
+    where: (table) => inArray(table.claTemplateId, templateIds)
+  });
+
+  const latestByTemplateId = new Map<string, ClaTemplateVersion>();
+  for (const version of versions) {
+    const current = latestByTemplateId.get(version.claTemplateId);
+    if (!current || compareByCreatedAtDesc(version, current) < 0) {
+      latestByTemplateId.set(version.claTemplateId, version);
+    }
+  }
+
+  return latestByTemplateId;
+}
+
 async function getLatestTemplateVersion(
   db: DbClient,
   templateId: string
 ): Promise<ClaTemplateVersion | null> {
-  const versions = await db.query.claTemplateVersions.findMany({
-    where: (table) => eq(table.claTemplateId, templateId)
-  });
-
-  return versions.sort(compareByCreatedAtDesc)[0] ?? null;
+  const latestVersions = await getLatestTemplateVersionsByTemplateIds(db, [templateId]);
+  return latestVersions.get(templateId) ?? null;
 }
 
 function toTemplateVersion(version: ClaTemplateVersion): TemplateVersion {
@@ -694,6 +796,35 @@ async function getRepositoryTemplateSettings(
   };
 }
 
+async function getRepositorySigningSettings(
+  db: DbClient,
+  repositoryId: string,
+  config: AppConfig
+): Promise<RepositorySigningSettings> {
+  const [settings, integration] = await Promise.all([
+    db.query.repositorySigningSettings.findFirst({
+      where: (table) => eq(table.repositoryId, repositoryId)
+    }),
+    getDropboxSignIntegration(db, repositoryId)
+  ]);
+
+  return {
+    repositoryId,
+    signingMode: settings?.signingMode ?? "simple",
+    dropboxSignConfigured: Boolean(integration),
+    dropboxSignApiKeyLast4: integration?.apiKeyLast4 ?? null,
+    dropboxSignCallbackUrl: new URL("/api/sign/dropbox/webhook", config.PUBLIC_APP_URL).toString(),
+    updatedByLogin: settings?.updatedByLogin ?? integration?.updatedByLogin ?? null,
+    updatedAt: (settings?.updatedAt ?? integration?.updatedAt)?.toISOString() ?? null
+  };
+}
+
+async function getDropboxSignIntegration(db: DbClient, repositoryId: string) {
+  return db.query.signingProviderIntegrations.findFirst({
+    where: (table) => eq(table.repositoryId, repositoryId)
+  });
+}
+
 async function assertTemplateVersionSelectable(
   db: DbClient,
   repositoryId: string,
@@ -739,6 +870,84 @@ async function selectTemplateVersion(params: {
         updatedAt: new Date()
       }
     });
+}
+
+async function selectSigningMode(params: {
+  db: DbClient;
+  repositoryId: string;
+  signingMode: RepositorySigningSettings["signingMode"];
+  session: CurrentSession;
+}): Promise<void> {
+  const integration = params.signingMode === "dropbox_sign"
+    ? await getDropboxSignIntegration(params.db, params.repositoryId)
+    : null;
+
+  await params.db
+    .insert(repositorySigningSettings)
+    .values({
+      repositoryId: params.repositoryId,
+      signingMode: params.signingMode,
+      signingProviderIntegrationId: integration?.signingProviderIntegrationId ?? null,
+      updatedByGithubUserId: params.session.user.githubUserId,
+      updatedByLogin: params.session.user.login
+    })
+    .onConflictDoUpdate({
+      target: repositorySigningSettings.repositoryId,
+      set: {
+        signingMode: params.signingMode,
+        signingProviderIntegrationId: integration?.signingProviderIntegrationId ?? null,
+        updatedByGithubUserId: params.session.user.githubUserId,
+        updatedByLogin: params.session.user.login,
+        updatedAt: new Date()
+      }
+    });
+}
+
+async function saveDropboxSignIntegration(params: {
+  db: DbClient;
+  config: AppConfig;
+  repositoryId: string;
+  apiKey?: string;
+  session: CurrentSession;
+}): Promise<void> {
+  const existing = await getDropboxSignIntegration(params.db, params.repositoryId);
+  if (!params.apiKey && !existing) {
+    throw new Error("Dropbox Sign API key is required");
+  }
+
+  const integrationId = createId("signint");
+  const encryptedApiKey = params.apiKey
+    ? encryptSigningCredential(params.config, params.apiKey)
+    : existing!.encryptedApiKey;
+  const apiKeyLast4 = params.apiKey ? keySuffix(params.apiKey) : existing!.apiKeyLast4;
+
+  await params.db
+    .insert(signingProviderIntegrations)
+    .values({
+      signingProviderIntegrationId: integrationId,
+      repositoryId: params.repositoryId,
+      provider: "dropbox_sign",
+      encryptedApiKey,
+      apiKeyLast4,
+      createdByGithubUserId: params.session.user.githubUserId,
+      createdByLogin: params.session.user.login,
+      updatedByGithubUserId: params.session.user.githubUserId,
+      updatedByLogin: params.session.user.login
+    })
+    .onConflictDoUpdate({
+      target: [signingProviderIntegrations.repositoryId, signingProviderIntegrations.provider],
+      set: {
+        encryptedApiKey,
+        apiKeyLast4,
+        updatedByGithubUserId: params.session.user.githubUserId,
+        updatedByLogin: params.session.user.login,
+        updatedAt: new Date()
+      }
+    });
+}
+
+function keySuffix(value: string): string {
+  return value.slice(-4);
 }
 
 async function listSignatureRecords(
@@ -865,6 +1074,9 @@ async function getRepositoryStats(
   const settings = await db.query.repositoryTemplateSettings.findFirst({
     where: (table) => eq(table.repositoryId, repositoryId)
   });
+  const signingSettings = await db.query.repositorySigningSettings.findFirst({
+    where: (table) => eq(table.repositoryId, repositoryId)
+  });
 
   let selectedTemplateName: string | null = null;
   if (settings?.mode === "managed" && settings.claTemplateVersionId) {
@@ -911,6 +1123,7 @@ async function getRepositoryStats(
 
   return {
     templateMode: settings?.mode === "managed" ? "managed" : "repository",
+    signingMode: signingSettings?.signingMode ?? "simple",
     selectedTemplateName,
     signatureCount: personalRows.length + corporateRows.length,
     pullRequestCheckCount: checkRows.length,

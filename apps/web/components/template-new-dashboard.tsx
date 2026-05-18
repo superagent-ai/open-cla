@@ -4,13 +4,15 @@ import type { AdminUser } from "@superagent-cla/shared";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { Value } from "platejs";
-import { useState, type FormEvent } from "react";
+import { useActionState, useState } from "react";
 import { Toaster } from "sonner";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { TemplatePlateEditor } from "@/components/editor/template-plate-editor";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SubmitButton } from "@/components/ui/submit-button";
+import { createTemplateAction } from "@/lib/actions/templates";
+import { emptyActionResult } from "@/lib/actions/types";
 
 type TemplateNewDashboardProps = {
   apiBaseUrl: string;
@@ -26,71 +28,12 @@ const initialEditorValue: Value = [
 
 export function TemplateNewDashboard({ apiBaseUrl, user }: TemplateNewDashboardProps) {
   const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [markdown, setMarkdown] = useState<string>("");
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-
-    const body = markdown.trim();
-    if (!body) {
-      setError("Template body cannot be empty.");
-      return;
-    }
-
-    const title = String(form.get("title") ?? "").trim();
-    if (!title) {
-      setError("Title is required.");
-      return;
-    }
-
-    setPending(true);
-    setError(null);
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/templates/global`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: title,
-          description: String(form.get("description") ?? ""),
-          title,
-          body
-        })
-      });
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as
-          | { error?: string; issues?: Array<{ path?: Array<string | number>; message?: string }> }
-          | null;
-        const detail = payload?.issues?.length
-          ? payload.issues
-              .map(
-                (issue) =>
-                  `${issue.path?.join(".") ?? "field"}: ${issue.message ?? "invalid"}`
-              )
-              .join("; ")
-          : null;
-        throw new Error(
-          detail
-            ? `${payload?.error ?? "Invalid request"} – ${detail}`
-            : payload?.error ?? `Request failed with ${response.status}`
-        );
-      }
-
-      router.push("/templates");
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to create template");
-      setPending(false);
-    }
-  }
+  const [markdown, setMarkdown] = useState("");
+  const [state, formAction] = useActionState(createTemplateAction, emptyActionResult());
 
   return (
     <DashboardShell apiBaseUrl={apiBaseUrl} user={user}>
-      <form className="flex flex-col gap-6" onSubmit={(event) => void submit(event)}>
+      <form action={formAction} className="flex flex-col gap-6">
         <div className="flex items-center justify-between gap-4">
           <button
             type="button"
@@ -102,7 +45,6 @@ export function TemplateNewDashboard({ apiBaseUrl, user }: TemplateNewDashboardP
           </button>
           <div className="flex items-center gap-3">
             <Button
-              disabled={pending}
               onClick={() => router.push("/templates")}
               size="sm"
               type="button"
@@ -110,15 +52,15 @@ export function TemplateNewDashboard({ apiBaseUrl, user }: TemplateNewDashboardP
             >
               Cancel
             </Button>
-            <Button disabled={pending} size="sm" type="submit">
+            <SubmitButton pendingLabel="Saving…" size="sm">
               Save template
-            </Button>
+            </SubmitButton>
           </div>
         </div>
 
-        {error ? (
+        {state.error ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
+            {state.error}
           </div>
         ) : null}
 
@@ -137,6 +79,8 @@ export function TemplateNewDashboard({ apiBaseUrl, user }: TemplateNewDashboardP
             placeholder="Add a short description"
           />
         </div>
+
+        <input name="body" type="hidden" value={markdown} />
 
         <div className="overflow-hidden rounded-2xl border bg-card">
           <TemplatePlateEditor

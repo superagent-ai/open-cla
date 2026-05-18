@@ -2,12 +2,20 @@
 
 import type { AdminUser, GlobalTemplateSummary } from "@superagent-cla/shared";
 import { ditherAvatarDataUri } from "dither-avatar";
-import { Plus } from "lucide-react";
+import { FileText, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle
+} from "@/components/ui/empty";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type TemplatesDashboardProps = {
@@ -57,9 +65,23 @@ export function TemplatesDashboard({ apiBaseUrl, user, templates }: TemplatesDas
 
         <TabsContent value="mine">
           {myTemplates.length === 0 ? (
-            <div className="rounded-lg border border-dashed bg-card/40 p-6 text-sm text-muted-foreground">
-              You haven&apos;t added any templates yet. Click “New” to create one.
-            </div>
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <FileText />
+                </EmptyMedia>
+                <EmptyTitle>No Templates Yet</EmptyTitle>
+                <EmptyDescription>
+                  Create a reusable CLA template that repositories can select from their policy settings.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent className="flex-row justify-center">
+                <Button onClick={() => router.push("/templates/new")} type="button">
+                  <Plus className="h-4 w-4" />
+                  Add New
+                </Button>
+              </EmptyContent>
+            </Empty>
           ) : (
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {myTemplates.map((template) => (

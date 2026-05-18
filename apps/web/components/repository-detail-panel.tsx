@@ -2,14 +2,31 @@
 
 import type {
   ClaDocumentSource,
+  RepositorySigningMode,
   SignatureRecord,
   SignaturesResponse,
   TemplateSummary,
   TemplatesResponse
 } from "@superagent-cla/shared";
-import { ChevronsUpDown, ExternalLink, Loader } from "lucide-react";
+import { Check, ChevronsUpDown, ExternalLink, Loader } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import {
+  useActionState,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+  type Dispatch,
+  type SetStateAction
+} from "react";
+
+import {
+  saveDropboxSignIntegrationAction,
+  updateSigningModeAction,
+  updateTemplateSelectionAction
+} from "@/lib/actions/admin-repository";
+import type { RepositoryActionResult } from "@/lib/actions/types";
+import { emptyRepositoryActionResult } from "@/lib/actions/types";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,6 +38,7 @@ import {
   BreadcrumbSeparator
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import { SubmitButton } from "@/components/ui/submit-button";
 import {
   Command,
   CommandEmpty,
@@ -39,22 +57,53 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 type RepositoryDetailPanelProps = {
   templatesResponse: TemplatesResponse;
   signaturesResponse: SignaturesResponse | null;
-  pending: boolean;
   onNavigateBack: () => void;
-  onSelectTemplate: (templateVersionId: string | null) => void;
 };
 
 export function RepositoryDetailPanel({
-  templatesResponse,
+  templatesResponse: initialTemplatesResponse,
   signaturesResponse,
-  pending,
-  onNavigateBack,
-  onSelectTemplate
+  onNavigateBack
 }: RepositoryDetailPanelProps) {
+  const [templatesResponse, setTemplatesResponse] = useState(initialTemplatesResponse);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const repositoryId = templatesResponse.repository.repositoryId;
+  const saveDropboxAction = saveDropboxSignIntegrationAction.bind(null, repositoryId);
+  const [dropboxState, dropboxFormAction, dropboxPending] = useActionState(
+    saveDropboxAction,
+    emptyRepositoryActionResult()
+  );
+
+  useEffect(() => {
+    setTemplatesResponse(initialTemplatesResponse);
+  }, [initialTemplatesResponse]);
+
+  useEffect(() => {
+    applyRepositoryPatch(dropboxState, setTemplatesResponse);
+  }, [dropboxState]);
+
+  const pending = isPending || dropboxPending;
+  const error = actionError ?? dropboxState.error;
+
+  function runRepositoryMutation(work: () => Promise<RepositoryActionResult>): void {
+    setActionError(null);
+    startTransition(async () => {
+      const result = await work();
+      if (result.error) {
+        setActionError(result.error);
+        return;
+      }
+      applyRepositoryPatch(result, setTemplatesResponse);
+    });
+  }
+
   const repo = templatesResponse.repository;
   const settings = templatesResponse.settings;
   const { defaultTemplates, globalCustomTemplates, repoCustomTemplates } = useMemo(
@@ -69,9 +118,20 @@ export function RepositoryDetailPanel({
 
   const isRepositoryFilePolicy = settings.mode === "repository";
   const managedVersionId = settings.mode === "managed" ? settings.selectedTemplateVersionId : null;
+  const signingSettings = templatesResponse.signingSettings;
+  const [showDropboxCredentials, setShowDropboxCredentials] = useState(
+    signingSettings.signingMode === "dropbox_sign"
+  );
+  const [draftSigningMode, setDraftSigningMode] = useState<RepositorySigningMode | null>(null);
+  const visibleSigningMode = draftSigningMode ?? signingSettings.signingMode;
 
   return (
     <section className="space-y-12">
+      {error ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
       <header className="space-y-3">
         <Breadcrumb>
           <BreadcrumbList>
@@ -141,7 +201,11 @@ export function RepositoryDetailPanel({
             pending={pending}
             repoCustomTemplates={repoCustomTemplates}
             settings={settings}
-            onSelectTemplate={onSelectTemplate}
+            onSelectTemplate={(templateVersionId) =>
+              runRepositoryMutation(() =>
+                updateTemplateSelectionAction(repositoryId, templateVersionId)
+              )
+            }
           />
           {pending ? (
             <Loader
@@ -150,6 +214,54 @@ export function RepositoryDetailPanel({
             />
           ) : null}
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold tracking-tight">Signing method</h2>
+          <p className="text-sm text-muted-foreground">
+            Use simple OpenCLA acceptance by default, or require Dropbox Sign for this repository.
+          </p>
+        </div>
+
+        <div className="grid max-w-3xl gap-3 md:grid-cols-2">
+          <SigningModeButton
+            active={visibleSigningMode === "simple"}
+            description="Contributors accept the CLA directly in OpenCLA."
+            disabled={pending}
+            label="Simple acceptance"
+            onClick={() => {
+              setDraftSigningMode(null);
+              setShowDropboxCredentials(false);
+              runRepositoryMutation(() => updateSigningModeAction(repositoryId, "simple"));
+            }}
+          />
+          <SigningModeButton
+            active={visibleSigningMode === "dropbox_sign"}
+            description={
+              signingSettings.dropboxSignConfigured
+                ? "Contributors sign the CLA using Dropbox Sign."
+                : "Contributors will sign using Dropbox Sign after credentials are added."
+            }
+            disabled={pending}
+            label="Dropbox Sign"
+            onClick={() => {
+              setDraftSigningMode("dropbox_sign");
+              setShowDropboxCredentials(true);
+              if (signingSettings.dropboxSignConfigured) {
+                runRepositoryMutation(() => updateSigningModeAction(repositoryId, "dropbox_sign"));
+              }
+            }}
+          />
+        </div>
+        {showDropboxCredentials || signingSettings.signingMode === "dropbox_sign" ? (
+          <DropboxSignCredentialsForm
+            action={dropboxFormAction}
+            apiKeyLast4={signingSettings.dropboxSignApiKeyLast4}
+            callbackUrl={signingSettings.dropboxSignCallbackUrl}
+            pending={pending}
+          />
+        ) : null}
       </section>
 
       {signaturesResponse ? (
@@ -270,6 +382,137 @@ export function RepositoryDetailPanel({
       ) : null}
     </section>
   );
+}
+
+function SigningModeButton({
+  active,
+  description,
+  disabled,
+  label,
+  onClick
+}: {
+  active: boolean;
+  description: string;
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={cn(
+        "rounded-xl border px-4 py-3 text-left transition-colors",
+        active
+          ? "border-ring bg-secondary text-foreground ring-3 ring-ring/20"
+          : "border-border bg-background hover:bg-muted/60",
+        disabled ? "cursor-not-allowed opacity-60" : ""
+      )}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="flex items-center justify-between gap-3">
+        <span className="block text-sm font-medium">{label}</span>
+        <span
+          className={cn(
+            "flex size-5 shrink-0 items-center justify-center rounded-full border",
+            active
+              ? "border-emerald-500 bg-emerald-500 text-white"
+              : "border-border text-transparent"
+          )}
+          aria-hidden="true"
+        >
+          <Check className="size-3.5" />
+        </span>
+      </span>
+      <span className="mt-1 block pr-8 text-sm text-muted-foreground">{description}</span>
+    </button>
+  );
+}
+
+function DropboxSignCredentialsForm({
+  action,
+  apiKeyLast4,
+  callbackUrl,
+  pending
+}: {
+  action: (formData: FormData) => void;
+  apiKeyLast4: string | null;
+  callbackUrl: string;
+  pending: boolean;
+}) {
+  return (
+    <form action={action} className="max-w-3xl rounded-xl border bg-card p-4 ring-1 ring-foreground/5">
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium text-foreground">Dropbox Sign credentials</h3>
+        <p className="text-sm text-muted-foreground">
+          Store the repository owner&apos;s Dropbox Sign API key. The key is encrypted at rest.
+        </p>
+        {apiKeyLast4 ? (
+          <p className="text-xs text-muted-foreground">
+            Current API key: <span className="font-mono text-foreground">****{apiKeyLast4}</span>
+          </p>
+        ) : null}
+      </div>
+
+      <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm leading-6 text-muted-foreground">
+        <li>
+          In Dropbox Sign, create an API app from the{" "}
+          <span className="font-medium text-foreground">API apps</span> section.
+        </li>
+        <li>
+          Set that app&apos;s <span className="font-medium text-foreground">Event callback</span> to{" "}
+          <span className="break-all font-mono text-xs text-foreground">
+            {callbackUrl}
+          </span>
+          .
+        </li>
+        <li>
+          Copy your account <span className="font-medium text-foreground">API key</span> and save it below.
+        </li>
+        <li>
+          In non-production deployments, OpenCLA sends Dropbox Sign requests in test mode automatically.
+        </li>
+      </ol>
+
+      <label className="mt-4 block space-y-1 text-sm">
+        <span className="font-medium text-foreground">API key</span>
+        <input
+          autoComplete="off"
+          className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          name="apiKey"
+          placeholder={apiKeyLast4 ? `****${apiKeyLast4}` : "Dropbox Sign API key"}
+          required={!apiKeyLast4}
+          type="password"
+        />
+      </label>
+
+      <div className="mt-4 flex justify-end">
+        <SubmitButton disabled={pending} pendingLabel="Saving…" size="sm">
+          Save credentials
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+function stringFormValue(form: FormData, name: string): string {
+  const value = form.get(name);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function applyRepositoryPatch(
+  result: RepositoryActionResult,
+  setTemplatesResponse: Dispatch<SetStateAction<TemplatesResponse>>
+): void {
+  if (!result.patch) {
+    return;
+  }
+
+  setTemplatesResponse((current) => ({
+    ...current,
+    ...result.patch
+  }));
 }
 
 /** cmdk lowercases `value`; suffix encodes the stable action key for onSelect */
