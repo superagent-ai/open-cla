@@ -10,6 +10,8 @@ import {
   PDF_PAGE_WIDTH,
   type PdfTextLine
 } from "./claPdf.js";
+import { appendClaSignaturePage } from "./appendClaSignaturePage.js";
+import { loadClaPdfBytes } from "./loadClaPdf.js";
 import { markdownToPdfLines } from "./claMarkdownPdf.js";
 
 const DROPBOX_SIGN_API_BASE = "https://api.hellosign.com/v3";
@@ -20,6 +22,9 @@ export type DropboxSigningRequestInput = {
   credentials: DropboxCredentials;
   title: string;
   body: string;
+  contentFormat?: "markdown" | "pdf";
+  pdfData?: Buffer | null;
+  pdfUrl?: string | null;
   versionHash: string;
   signerName: string;
   signerEmail: string;
@@ -71,7 +76,15 @@ export function dropboxUsesTestMode(config: AppConfig): boolean {
 export async function createDropboxSigningRequest(
   input: DropboxSigningRequestInput
 ): Promise<DropboxSigningRequestResult> {
-  const pdfBytes = await renderClaPdf(input);
+  const pdfBytes =
+    input.contentFormat === "pdf" && (input.pdfData || input.pdfUrl)
+      ? await appendClaSignaturePage(
+          await loadClaPdfBytes({
+            pdfData: input.pdfData,
+            pdfUrl: input.pdfUrl
+          })
+        )
+      : await renderClaPdf(input);
   const form = new FormData();
   form.set("title", input.title);
   form.set("subject", `Sign CLA for ${input.repositoryFullName}`);

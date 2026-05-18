@@ -45,12 +45,18 @@ export type AdminInstallation = z.infer<typeof AdminInstallationSchema>;
 export const TemplateSourceSchema = z.enum(["default", "uploaded"]);
 export type TemplateSource = z.infer<typeof TemplateSourceSchema>;
 
+export const ClaContentFormatSchema = z.enum(["markdown", "pdf"]);
+export type ClaContentFormat = z.infer<typeof ClaContentFormatSchema>;
+
 export const TemplateVersionSchema = z.object({
   templateVersionId: z.string(),
   templateId: z.string(),
   title: z.string(),
   versionHash: z.string(),
+  contentFormat: ClaContentFormatSchema,
   body: z.string(),
+  pdfUrl: z.string().nullable(),
+  pdfFileName: z.string().nullable(),
   createdByLogin: z.string().nullable(),
   createdAt: z.string()
 });
@@ -99,12 +105,17 @@ export const TemplatesResponseSchema = z.object({
 });
 export type TemplatesResponse = z.infer<typeof TemplatesResponseSchema>;
 
+const pdfUploadFields = {
+  pdfFileName: z.string().trim().min(1).max(255),
+  pdfBase64: z.string().min(1)
+};
+
 export const CreateTemplateRequestSchema = z.object({
   repositoryId: z.string().min(1),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
   title: z.string().trim().min(1).max(200),
-  body: z.string().trim().min(1)
+  ...pdfUploadFields
 });
 export type CreateTemplateRequest = z.infer<typeof CreateTemplateRequestSchema>;
 
@@ -124,16 +135,16 @@ export const CreateGlobalTemplateRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
   title: z.string().trim().min(1).max(200),
-  body: z.string().trim().min(1)
+  ...pdfUploadFields
 });
 export type CreateGlobalTemplateRequest = z.infer<typeof CreateGlobalTemplateRequestSchema>;
 
-export const UpdateGlobalTemplateRequestSchema = CreateGlobalTemplateRequestSchema;
-export type UpdateGlobalTemplateRequest = CreateGlobalTemplateRequest;
-
 export const TemplateDetailResponseSchema = z.object({
   template: GlobalTemplateSummarySchema,
-  body: z.string()
+  contentFormat: ClaContentFormatSchema,
+  body: z.string(),
+  pdfUrl: z.string().nullable(),
+  pdfFileName: z.string().nullable()
 });
 export type TemplateDetailResponse = z.infer<typeof TemplateDetailResponseSchema>;
 
@@ -190,6 +201,8 @@ export const SigningPageResponseSchema = z.object({
     documentId: z.string(),
     title: z.string(),
     body: z.string(),
+    contentFormat: ClaContentFormatSchema,
+    pdfUrl: z.string().nullable(),
     versionHash: z.string(),
     source: ClaDocumentSourceSchema
   }),

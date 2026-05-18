@@ -1,3 +1,4 @@
+import { customType } from "drizzle-orm/pg-core";
 import {
   boolean,
   index,
@@ -11,6 +12,12 @@ import {
   uniqueIndex
 } from "drizzle-orm/pg-core";
 
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  }
+});
+
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
@@ -21,6 +28,8 @@ export const claDocumentSource = pgEnum("cla_document_source", [
   "default_template",
   "managed_template"
 ]);
+
+export const claContentFormat = pgEnum("cla_content_format", ["markdown", "pdf"]);
 
 export const claTemplateSource = pgEnum("cla_template_source", [
   "default",
@@ -129,7 +138,10 @@ export const claDocuments = pgTable(
     path: text("path"),
     gitSha: text("git_sha"),
     versionHash: text("version_hash").notNull(),
-    body: text("body").notNull(),
+    body: text("body").notNull().default(""),
+    contentFormat: claContentFormat("content_format").notNull().default("markdown"),
+    pdfUrl: text("pdf_url"),
+    pdfData: bytea("pdf_data"),
     ...timestamps
   },
   (table) => ({
@@ -172,7 +184,11 @@ export const claTemplateVersions = pgTable(
       .notNull()
       .references(() => claTemplates.claTemplateId, { onDelete: "cascade" }),
     title: text("title").notNull(),
-    body: text("body").notNull(),
+    body: text("body").notNull().default(""),
+    contentFormat: claContentFormat("content_format").notNull().default("markdown"),
+    pdfUrl: text("pdf_url"),
+    pdfFileName: text("pdf_file_name"),
+    pdfData: bytea("pdf_data"),
     versionHash: text("version_hash").notNull(),
     createdByGithubUserId: text("created_by_github_user_id").references(
       () => githubUsers.githubUserId,

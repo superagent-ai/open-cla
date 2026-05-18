@@ -4,7 +4,6 @@ import {
   SaveDropboxSignIntegrationRequestSchema,
   SelectSigningModeRequestSchema,
   SelectTemplateRequestSchema,
-  UpdateGlobalTemplateRequestSchema,
   type AdminInstallation,
   type AdminRepository,
   type GlobalTemplateSummary,
@@ -35,8 +34,10 @@ import {
 } from "../db/schema.js";
 import type { AppConfig } from "../config.js";
 import { listDefaultTemplates, type DefaultClaTemplate } from "../cla/templates.js";
+import { adminTemplatePdfPath } from "../cla/pdfPaths.js";
+import { decodePdfBase64 } from "../signing/validatePdf.js";
 import { createId } from "../utils/ids.js";
-import { sha256 } from "../utils/sha.js";
+import { sha256, sha256Bytes } from "../utils/sha.js";
 import { encryptSigningCredential } from "../signing/credentials.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
 
@@ -131,7 +132,8 @@ export async function registerAdminRoutes(
 
     const templateId = createId("tmpl");
     const templateVersionId = createId("tmplver");
-    const versionHash = sha256(body.body);
+    const pdfData = decodePdfBase64(body.pdfBase64);
+    const versionHash = sha256Bytes(pdfData);
 
     await params.db.insert(claTemplates).values({
       claTemplateId: templateId,
@@ -149,7 +151,11 @@ export async function registerAdminRoutes(
         claTemplateVersionId: templateVersionId,
         claTemplateId: templateId,
         title: body.title,
-        body: body.body,
+        body: "",
+        contentFormat: "pdf",
+        pdfUrl: adminTemplatePdfPath(templateId),
+        pdfFileName: body.pdfFileName,
+        pdfData,
         versionHash,
         createdByGithubUserId: context.session.user.githubUserId,
         createdByLogin: context.session.user.login
@@ -280,6 +286,7 @@ export async function registerAdminRoutes(
     }
 
     const summary = await toTemplateSummaryForDb(params.db, template);
+    const latestVersion = summary.latestVersion;
     return {
       template: {
         ...summary,
@@ -287,115 +294,56 @@ export async function registerAdminRoutes(
         createdAt: template.createdAt.toISOString(),
         isMine: isOwnedUpload
       },
-      body: summary.latestVersion?.body ?? ""
+      contentFormat: latestVersion?.contentFormat ?? "markdown",
+      body: latestVersion?.body ?? "",
+      pdfUrl:
+        latestVersion?.contentFormat === "pdf"
+          ? adminTemplatePdfPath(templateId)
+          : (latestVersion?.pdfUrl ?? null),
+      pdfFileName: latestVersion?.pdfFileName ?? null
     };
   });
 
-  app.put("/api/admin/templates/:templateId", async (request, reply) => {
+  app.get("/api/admin/templates/:templateId/pdf", async (request, reply) => {
     const session = await requireSession(params.db, request, reply);
     if (!session) {
       return;
     }
 
     const { templateId } = request.params as { templateId: string };
-    const body = UpdateGlobalTemplateRequestSchema.parse(request.body);
-
     const template = await params.db.query.claTemplates.findFirst({
       where: (table) => eq(table.claTemplateId, templateId)
     });
     if (!template || template.repositoryId !== null) {
       return reply.code(404).send({ error: "Template not found" });
     }
-    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
-      return reply.code(403).send({ error: "Template not editable" });
+
+    const isVisibleDefault = template.source === "default";
+    const isOwnedUpload =
+      template.source === "uploaded" && template.createdByGithubUserId === session.user.githubUserId;
+    if (!isVisibleDefault && !isOwnedUpload) {
+      return reply.code(403).send({ error: "Template not accessible" });
     }
 
-    await params.db
-      .update(claTemplates)
-      .set({
-        name: body.name,
-        description: body.description ?? null,
-        updatedAt: new Date()
-      })
-      .where(eq(claTemplates.claTemplateId, template.claTemplateId));
-
-    const versionHash = sha256(body.body);
-    const existingVersion = await params.db.query.claTemplateVersions.findFirst({
-      where: (table) =>
-        and(
-          eq(table.claTemplateId, template.claTemplateId),
-          eq(table.versionHash, versionHash)
-        )
-    });
-
-    let newVersionId: string | null = null;
-    if (!existingVersion) {
-      const versionId = createId("tmplver");
-      await params.db.insert(claTemplateVersions).values({
-        claTemplateVersionId: versionId,
-        claTemplateId: template.claTemplateId,
-        title: body.title,
-        body: body.body,
-        versionHash,
-        createdByGithubUserId: session.user.githubUserId,
-        createdByLogin: session.user.login
-      });
-      newVersionId = versionId;
+    const version = await getLatestTemplateVersion(params.db, templateId);
+    if (!version?.pdfData) {
+      return reply.code(404).send({ error: "PDF not found" });
     }
 
-    return reply.send({
-      ok: true,
-      templateId: template.claTemplateId,
-      versionId: newVersionId ?? existingVersion?.claTemplateVersionId ?? null,
-      versionHash
+    return reply
+      .header("content-type", "application/pdf")
+      .header("cache-control", "private, max-age=3600")
+      .send(version.pdfData);
+  });
+
+  app.put("/api/admin/templates/:templateId", async (_request, reply) => {
+    return reply.code(405).send({
+      error: "Uploaded templates are PDF-only. Create a new template to replace the file."
     });
   });
 
-  app.post("/api/admin/templates/:templateId/duplicate", async (request, reply) => {
-    const session = await requireSession(params.db, request, reply);
-    if (!session) {
-      return;
-    }
-
-    const { templateId } = request.params as { templateId: string };
-    const template = await params.db.query.claTemplates.findFirst({
-      where: (table) => eq(table.claTemplateId, templateId)
-    });
-    if (!template || template.repositoryId !== null) {
-      return reply.code(404).send({ error: "Template not found" });
-    }
-    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
-      return reply.code(403).send({ error: "Template not duplicable" });
-    }
-
-    const latestVersion = await getLatestTemplateVersion(params.db, template.claTemplateId);
-    if (!latestVersion) {
-      return reply.code(400).send({ error: "Template has no version to duplicate" });
-    }
-
-    const copiedTemplateId = createId("tmpl");
-    const copiedVersionId = createId("tmplver");
-    await params.db.insert(claTemplates).values({
-      claTemplateId: copiedTemplateId,
-      repositoryId: null,
-      source: "uploaded",
-      name: `Copy of ${template.name}`,
-      description: template.description,
-      createdByGithubUserId: session.user.githubUserId,
-      createdByLogin: session.user.login
-    });
-
-    await params.db.insert(claTemplateVersions).values({
-      claTemplateVersionId: copiedVersionId,
-      claTemplateId: copiedTemplateId,
-      title: latestVersion.title,
-      body: latestVersion.body,
-      versionHash: latestVersion.versionHash,
-      createdByGithubUserId: session.user.githubUserId,
-      createdByLogin: session.user.login
-    });
-
-    return reply.code(201).send({ ok: true, templateId: copiedTemplateId });
+  app.post("/api/admin/templates/:templateId/duplicate", async (_request, reply) => {
+    return reply.code(405).send({ error: "Template duplication is not supported." });
   });
 
   app.delete("/api/admin/templates/:templateId", async (request, reply) => {
@@ -430,7 +378,8 @@ export async function registerAdminRoutes(
 
     const templateId = createId("tmpl");
     const templateVersionId = createId("tmplver");
-    const versionHash = sha256(body.body);
+    const pdfData = decodePdfBase64(body.pdfBase64);
+    const versionHash = sha256Bytes(pdfData);
 
     await params.db.insert(claTemplates).values({
       claTemplateId: templateId,
@@ -446,7 +395,11 @@ export async function registerAdminRoutes(
       claTemplateVersionId: templateVersionId,
       claTemplateId: templateId,
       title: body.title,
-      body: body.body,
+      body: "",
+      contentFormat: "pdf",
+      pdfUrl: adminTemplatePdfPath(templateId),
+      pdfFileName: body.pdfFileName,
+      pdfData,
       versionHash,
       createdByGithubUserId: session.user.githubUserId,
       createdByLogin: session.user.login
@@ -751,7 +704,10 @@ function toTemplateVersion(version: ClaTemplateVersion): TemplateVersion {
     templateId: version.claTemplateId,
     title: version.title,
     versionHash: version.versionHash,
+    contentFormat: version.contentFormat,
     body: version.body,
+    pdfUrl: version.pdfUrl,
+    pdfFileName: version.pdfFileName,
     createdByLogin: version.createdByLogin,
     createdAt: version.createdAt.toISOString()
   };

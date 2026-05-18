@@ -9,7 +9,9 @@ import type {
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, eq } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
+import { signClaPdfPath } from "../cla/pdfPaths.js";
 import { resolveClaForRepository } from "../cla/resolveCla.js";
+import { loadClaDocumentPdfBytes } from "../signing/loadClaPdf.js";
 import type { DbClient } from "../db/client.js";
 import {
   claDocuments,
@@ -91,6 +93,33 @@ export async function registerSignRoutes(
     }
 
     return toSigningPageResponse(session, state);
+  });
+
+  app.get("/api/sign/cla/:documentId/pdf", async (request, reply) => {
+    const session = await getCurrentSession(params.db, request);
+    if (!session) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+
+    const { documentId } = request.params as { documentId: string };
+    const document = await params.db.query.claDocuments.findFirst({
+      where: (table) => eq(table.claDocumentId, documentId)
+    });
+    if (!document) {
+      return reply.code(404).send({ error: "CLA document not found" });
+    }
+
+    try {
+      const pdfBytes = await loadClaDocumentPdfBytes(params.db, documentId);
+      return reply
+        .header("content-type", "application/pdf")
+        .header("cache-control", "private, max-age=3600")
+        .send(Buffer.from(pdfBytes));
+    } catch (error) {
+      return reply.code(404).send({
+        error: error instanceof Error ? error.message : "CLA PDF not found"
+      });
+    }
   });
 
   app.post("/api/sign/personal", async (request, reply) => {
@@ -389,6 +418,11 @@ function toSigningPageResponse(
       documentId: state.cla.document.claDocumentId,
       title: state.cla.title,
       body: state.cla.body,
+      contentFormat: state.cla.contentFormat,
+      pdfUrl:
+        state.cla.contentFormat === "pdf"
+          ? signClaPdfPath(state.cla.document.claDocumentId)
+          : state.cla.pdfUrl,
       versionHash: state.cla.versionHash,
       source: state.cla.source
     },
@@ -486,6 +520,9 @@ async function createDropboxSignatureRequestResponse(params: {
     },
     title: params.claTitle?.trim() || "Contributor License Agreement",
     body: params.claDocument.body,
+    contentFormat: params.claDocument.contentFormat,
+    pdfData: params.claDocument.pdfData,
+    pdfUrl: params.claDocument.pdfUrl,
     versionHash: params.claDocument.versionHash,
     signerName: params.session.user.login,
     signerEmail,

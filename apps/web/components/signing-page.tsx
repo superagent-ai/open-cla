@@ -157,19 +157,27 @@ export function SigningPage({
           ) : null}
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-            <Card className="gap-0 py-0">
-              <CardContent className="px-6 py-6 md:px-8">
-                {signing.cla.body.trim() ? (
-                  <article>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                      {signing.cla.body}
-                    </ReactMarkdown>
-                  </article>
-                ) : (
-                  <p className="text-sm text-muted-foreground">This CLA document has no body.</p>
-                )}
-              </CardContent>
-            </Card>
+            {signing.cla.contentFormat === "pdf" && signing.cla.pdfUrl ? (
+              <iframe
+                className="h-[min(75vh,900px)] w-full"
+                src={signing.cla.pdfUrl}
+                title={signing.cla.title}
+              />
+            ) : (
+              <Card className="gap-0 py-0">
+                <CardContent className="px-6 py-6 md:px-8">
+                  {signing.cla.body.trim() ? (
+                    <article>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                        {signing.cla.body}
+                      </ReactMarkdown>
+                    </article>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">This CLA document has no body.</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             <Card
               className={cn(
