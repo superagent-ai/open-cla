@@ -52,6 +52,26 @@ export async function buildServer(dependencies: ServerDependencies = {}): Promis
     }
   );
 
+  app.addContentTypeParser(
+    /^multipart\/form-data/i,
+    { parseAs: "string" },
+    (request, body, done) => {
+      const rawBody = typeof body === "string" ? body : body.toString("utf8");
+      (request as typeof request & { rawBody?: string }).rawBody = rawBody;
+      done(null, parseDropboxCallbackBody(rawBody));
+    }
+  );
+
+  app.addContentTypeParser(
+    "text/plain",
+    { parseAs: "string" },
+    (request, body, done) => {
+      const rawBody = typeof body === "string" ? body : body.toString("utf8");
+      (request as typeof request & { rawBody?: string }).rawBody = rawBody;
+      done(null, parseDropboxCallbackBody(rawBody));
+    }
+  );
+
   await app.register(cookie, {
     secret: config.SESSION_SECRET
   });
@@ -65,7 +85,7 @@ export async function buildServer(dependencies: ServerDependencies = {}): Promis
 
   await registerWebhookRoutes(app, { db, githubApp, webhooks, config });
   await registerAuthRoutes(app, { db, oauthApp, config });
-  await registerAdminRoutes(app, { db });
+  await registerAdminRoutes(app, { db, config });
   await registerSignRoutes(app, { db, githubApp, config });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -98,6 +118,29 @@ export async function buildServer(dependencies: ServerDependencies = {}): Promis
   });
 
   return app;
+}
+
+function parseDropboxCallbackBody(rawBody: string): unknown {
+  if (!rawBody) {
+    return undefined;
+  }
+
+  try {
+    const params = new URLSearchParams(rawBody);
+    const json = params.get("json");
+    if (json) {
+      return { json };
+    }
+  } catch {
+    // Fall through to multipart/raw handling.
+  }
+
+  const multipartJson = rawBody.match(/name="json"(?:\r?\n[^\r\n]*)?\r?\n\r?\n([\s\S]*?)\r?\n--/);
+  if (multipartJson?.[1]) {
+    return { json: multipartJson[1].trim() };
+  }
+
+  return rawBody;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

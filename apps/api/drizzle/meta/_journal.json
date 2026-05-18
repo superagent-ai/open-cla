@@ -15,6 +15,41 @@
       "when": 1778746215349,
       "tag": "0001_legal_unicorn",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779115227876,
+      "tag": "0002_dropbox_sign_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1779115450000,
+      "tag": "0003_dropbox_sign_key_suffix",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779120000000,
+      "tag": "0004_dropbox_sign_api_key_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779121000000,
+      "tag": "0005_template_pdf",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779122000000,
+      "tag": "0006_template_pdf_data",
+      "breakpoints": true
     }
   ]
 }

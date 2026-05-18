@@ -16,6 +16,8 @@ export type ResolvedCla = {
   document: ClaDocument;
   title: string;
   body: string;
+  contentFormat: "markdown" | "pdf";
+  pdfUrl: string | null;
   versionHash: string;
   source: "repository" | "default_template" | "managed_template";
 };
@@ -38,7 +40,10 @@ export async function resolveClaForRepository(params: {
       db: params.db,
       repositoryId: params.repositoryId,
       title: managedTemplate.version.title,
-      body: managedTemplate.version.body,
+      body: managedTemplate.version.contentFormat === "pdf" ? "" : managedTemplate.version.body,
+      contentFormat: managedTemplate.version.contentFormat,
+      pdfData: managedTemplate.version.pdfData ?? null,
+      versionHash: managedTemplate.version.versionHash,
       source: "managed_template",
       templateName: managedTemplate.template.name
     });
@@ -57,6 +62,8 @@ export async function resolveClaForRepository(params: {
       repositoryId: params.repositoryId,
       title: "Repository CLA",
       body: repoCla.body,
+      contentFormat: "markdown",
+      pdfUrl: null,
       source: "repository",
       path: "CLA.md",
       gitSha: repoCla.gitSha
@@ -69,6 +76,8 @@ export async function resolveClaForRepository(params: {
     repositoryId: params.repositoryId,
     title: template.title,
     body: template.body,
+    contentFormat: "markdown",
+    pdfUrl: null,
     source: "default_template",
     templateName: template.name
   });
@@ -148,12 +157,18 @@ async function persistResolvedCla(params: {
   repositoryId: string;
   title: string;
   body: string;
+  contentFormat: "markdown" | "pdf";
+  pdfData?: Buffer | null;
+  pdfUrl?: string | null;
+  versionHash?: string;
   source: "repository" | "default_template" | "managed_template";
   templateName?: string;
   path?: string;
   gitSha?: string | null;
 }): Promise<ResolvedCla> {
-  const versionHash = sha256(params.body);
+  const versionHash = params.versionHash ?? sha256(params.body);
+  const claDocumentId = createId("cla");
+  const pdfUrl = params.contentFormat === "pdf" && params.pdfData ? `/api/sign/cla/${claDocumentId}/pdf` : (params.pdfUrl ?? null);
   const existing = await params.db.query.claDocuments.findFirst({
     where: (table, { and, eq }) =>
       and(eq(table.repositoryId, params.repositoryId), eq(table.versionHash, versionHash))
@@ -164,12 +179,16 @@ async function persistResolvedCla(params: {
       document: existing,
       title: params.title,
       body: existing.body,
+      contentFormat: existing.contentFormat,
+      pdfUrl:
+        existing.contentFormat === "pdf" && (existing.pdfData || existing.pdfUrl)
+          ? `/api/sign/cla/${existing.claDocumentId}/pdf`
+          : existing.pdfUrl,
       versionHash,
       source: existing.source
     };
   }
 
-  const claDocumentId = createId("cla");
   const [document] = await params.db
     .insert(claDocuments)
     .values({
@@ -180,7 +199,10 @@ async function persistResolvedCla(params: {
       path: params.path,
       gitSha: params.gitSha,
       versionHash,
-      body: params.body
+      body: params.body,
+      contentFormat: params.contentFormat,
+      pdfUrl,
+      pdfData: params.pdfData ?? null
     })
     .returning();
 
@@ -192,6 +214,8 @@ async function persistResolvedCla(params: {
     document,
     title: params.title,
     body: document.body,
+    contentFormat: document.contentFormat,
+    pdfUrl: document.pdfUrl,
     versionHash,
     source: document.source
   };

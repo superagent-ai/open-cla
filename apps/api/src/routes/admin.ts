@@ -1,12 +1,14 @@
 import {
   CreateGlobalTemplateRequestSchema,
   CreateTemplateRequestSchema,
+  SaveDropboxSignIntegrationRequestSchema,
+  SelectSigningModeRequestSchema,
   SelectTemplateRequestSchema,
-  UpdateGlobalTemplateRequestSchema,
   type AdminInstallation,
   type AdminRepository,
   type GlobalTemplateSummary,
   type PullRequestCoverage,
+  type RepositorySigningSettings,
   type RepositoryTemplateSettings,
   type SignatureRecord,
   type TemplateSummary,
@@ -23,14 +25,20 @@ import {
   personalSignatures,
   pullRequestChecks,
   repositories,
+  repositorySigningSettings,
   repositoryTemplateSettings,
+  signingProviderIntegrations,
   type ClaDocument,
   type ClaTemplate,
   type ClaTemplateVersion
 } from "../db/schema.js";
+import type { AppConfig } from "../config.js";
 import { listDefaultTemplates, type DefaultClaTemplate } from "../cla/templates.js";
+import { adminTemplatePdfPath } from "../cla/pdfPaths.js";
+import { decodePdfBase64 } from "../signing/validatePdf.js";
 import { createId } from "../utils/ids.js";
-import { sha256 } from "../utils/sha.js";
+import { sha256, sha256Bytes } from "../utils/sha.js";
+import { encryptSigningCredential } from "../signing/credentials.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
 
 type AdminRepositoryContext = {
@@ -42,6 +50,7 @@ export async function registerAdminRoutes(
   app: FastifyInstance,
   params: {
     db: DbClient;
+    config: AppConfig;
   }
 ): Promise<void> {
   app.get("/api/admin/me", async (request, reply) => {
@@ -104,10 +113,12 @@ export async function registerAdminRoutes(
 
     const templates = await listTemplatesForRepository(params.db, { repositoryId });
     const settings = await getRepositoryTemplateSettings(params.db, repositoryId);
+    const signingSettings = await getRepositorySigningSettings(params.db, repositoryId, params.config);
 
     return {
       repository: toAdminRepository(context.repository, true),
       settings,
+      signingSettings,
       templates
     };
   });
@@ -121,7 +132,8 @@ export async function registerAdminRoutes(
 
     const templateId = createId("tmpl");
     const templateVersionId = createId("tmplver");
-    const versionHash = sha256(body.body);
+    const pdfData = decodePdfBase64(body.pdfBase64);
+    const versionHash = sha256Bytes(pdfData);
 
     await params.db.insert(claTemplates).values({
       claTemplateId: templateId,
@@ -139,7 +151,11 @@ export async function registerAdminRoutes(
         claTemplateVersionId: templateVersionId,
         claTemplateId: templateId,
         title: body.title,
-        body: body.body,
+        body: "",
+        contentFormat: "pdf",
+        pdfUrl: adminTemplatePdfPath(templateId),
+        pdfFileName: body.pdfFileName,
+        pdfData,
         versionHash,
         createdByGithubUserId: context.session.user.githubUserId,
         createdByLogin: context.session.user.login
@@ -158,7 +174,7 @@ export async function registerAdminRoutes(
     });
 
     return reply.code(201).send({
-      template: await toTemplateSummary(params.db, {
+      template: await toTemplateSummaryForDb(params.db, {
         claTemplateId: templateId,
         repositoryId: context.repository.repositoryId,
         source: "uploaded",
@@ -195,17 +211,22 @@ export async function registerAdminRoutes(
         )
     });
 
-    const summaries: GlobalTemplateSummary[] = await Promise.all(
-      allTemplates.map(async (template) => {
-        const summary = await toTemplateSummary(params.db, template);
-        return {
-          ...summary,
-          createdByLogin: template.createdByLogin,
-          createdAt: template.createdAt.toISOString(),
-          isMine: template.createdByGithubUserId === session.user.githubUserId
-        };
-      })
+    const latestVersions = await getLatestTemplateVersionsByTemplateIds(
+      params.db,
+      allTemplates.map((template) => template.claTemplateId)
     );
+    const summaries: GlobalTemplateSummary[] = allTemplates.map((template) => {
+      const summary = toTemplateSummary(
+        template,
+        latestVersions.get(template.claTemplateId) ?? null
+      );
+      return {
+        ...summary,
+        createdByLogin: template.createdByLogin,
+        createdAt: template.createdAt.toISOString(),
+        isMine: template.createdByGithubUserId === session.user.githubUserId
+      };
+    });
 
     summaries.sort((left, right) => {
       if (left.source !== right.source) {
@@ -264,7 +285,8 @@ export async function registerAdminRoutes(
       return reply.code(403).send({ error: "Template not accessible" });
     }
 
-    const summary = await toTemplateSummary(params.db, template);
+    const summary = await toTemplateSummaryForDb(params.db, template);
+    const latestVersion = summary.latestVersion;
     return {
       template: {
         ...summary,
@@ -272,115 +294,56 @@ export async function registerAdminRoutes(
         createdAt: template.createdAt.toISOString(),
         isMine: isOwnedUpload
       },
-      body: summary.latestVersion?.body ?? ""
+      contentFormat: latestVersion?.contentFormat ?? "markdown",
+      body: latestVersion?.body ?? "",
+      pdfUrl:
+        latestVersion?.contentFormat === "pdf"
+          ? adminTemplatePdfPath(templateId)
+          : (latestVersion?.pdfUrl ?? null),
+      pdfFileName: latestVersion?.pdfFileName ?? null
     };
   });
 
-  app.put("/api/admin/templates/:templateId", async (request, reply) => {
+  app.get("/api/admin/templates/:templateId/pdf", async (request, reply) => {
     const session = await requireSession(params.db, request, reply);
     if (!session) {
       return;
     }
 
     const { templateId } = request.params as { templateId: string };
-    const body = UpdateGlobalTemplateRequestSchema.parse(request.body);
-
     const template = await params.db.query.claTemplates.findFirst({
       where: (table) => eq(table.claTemplateId, templateId)
     });
     if (!template || template.repositoryId !== null) {
       return reply.code(404).send({ error: "Template not found" });
     }
-    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
-      return reply.code(403).send({ error: "Template not editable" });
+
+    const isVisibleDefault = template.source === "default";
+    const isOwnedUpload =
+      template.source === "uploaded" && template.createdByGithubUserId === session.user.githubUserId;
+    if (!isVisibleDefault && !isOwnedUpload) {
+      return reply.code(403).send({ error: "Template not accessible" });
     }
 
-    await params.db
-      .update(claTemplates)
-      .set({
-        name: body.name,
-        description: body.description ?? null,
-        updatedAt: new Date()
-      })
-      .where(eq(claTemplates.claTemplateId, template.claTemplateId));
-
-    const versionHash = sha256(body.body);
-    const existingVersion = await params.db.query.claTemplateVersions.findFirst({
-      where: (table) =>
-        and(
-          eq(table.claTemplateId, template.claTemplateId),
-          eq(table.versionHash, versionHash)
-        )
-    });
-
-    let newVersionId: string | null = null;
-    if (!existingVersion) {
-      const versionId = createId("tmplver");
-      await params.db.insert(claTemplateVersions).values({
-        claTemplateVersionId: versionId,
-        claTemplateId: template.claTemplateId,
-        title: body.title,
-        body: body.body,
-        versionHash,
-        createdByGithubUserId: session.user.githubUserId,
-        createdByLogin: session.user.login
-      });
-      newVersionId = versionId;
+    const version = await getLatestTemplateVersion(params.db, templateId);
+    if (!version?.pdfData) {
+      return reply.code(404).send({ error: "PDF not found" });
     }
 
-    return reply.send({
-      ok: true,
-      templateId: template.claTemplateId,
-      versionId: newVersionId ?? existingVersion?.claTemplateVersionId ?? null,
-      versionHash
+    return reply
+      .header("content-type", "application/pdf")
+      .header("cache-control", "private, max-age=3600")
+      .send(version.pdfData);
+  });
+
+  app.put("/api/admin/templates/:templateId", async (_request, reply) => {
+    return reply.code(405).send({
+      error: "Uploaded templates are PDF-only. Create a new template to replace the file."
     });
   });
 
-  app.post("/api/admin/templates/:templateId/duplicate", async (request, reply) => {
-    const session = await requireSession(params.db, request, reply);
-    if (!session) {
-      return;
-    }
-
-    const { templateId } = request.params as { templateId: string };
-    const template = await params.db.query.claTemplates.findFirst({
-      where: (table) => eq(table.claTemplateId, templateId)
-    });
-    if (!template || template.repositoryId !== null) {
-      return reply.code(404).send({ error: "Template not found" });
-    }
-    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
-      return reply.code(403).send({ error: "Template not duplicable" });
-    }
-
-    const latestVersion = await getLatestTemplateVersion(params.db, template.claTemplateId);
-    if (!latestVersion) {
-      return reply.code(400).send({ error: "Template has no version to duplicate" });
-    }
-
-    const copiedTemplateId = createId("tmpl");
-    const copiedVersionId = createId("tmplver");
-    await params.db.insert(claTemplates).values({
-      claTemplateId: copiedTemplateId,
-      repositoryId: null,
-      source: "uploaded",
-      name: `Copy of ${template.name}`,
-      description: template.description,
-      createdByGithubUserId: session.user.githubUserId,
-      createdByLogin: session.user.login
-    });
-
-    await params.db.insert(claTemplateVersions).values({
-      claTemplateVersionId: copiedVersionId,
-      claTemplateId: copiedTemplateId,
-      title: latestVersion.title,
-      body: latestVersion.body,
-      versionHash: latestVersion.versionHash,
-      createdByGithubUserId: session.user.githubUserId,
-      createdByLogin: session.user.login
-    });
-
-    return reply.code(201).send({ ok: true, templateId: copiedTemplateId });
+  app.post("/api/admin/templates/:templateId/duplicate", async (_request, reply) => {
+    return reply.code(405).send({ error: "Template duplication is not supported." });
   });
 
   app.delete("/api/admin/templates/:templateId", async (request, reply) => {
@@ -415,7 +378,8 @@ export async function registerAdminRoutes(
 
     const templateId = createId("tmpl");
     const templateVersionId = createId("tmplver");
-    const versionHash = sha256(body.body);
+    const pdfData = decodePdfBase64(body.pdfBase64);
+    const versionHash = sha256Bytes(pdfData);
 
     await params.db.insert(claTemplates).values({
       claTemplateId: templateId,
@@ -431,7 +395,11 @@ export async function registerAdminRoutes(
       claTemplateVersionId: templateVersionId,
       claTemplateId: templateId,
       title: body.title,
-      body: body.body,
+      body: "",
+      contentFormat: "pdf",
+      pdfUrl: adminTemplatePdfPath(templateId),
+      pdfFileName: body.pdfFileName,
+      pdfData,
       versionHash,
       createdByGithubUserId: session.user.githubUserId,
       createdByLogin: session.user.login
@@ -464,6 +432,60 @@ export async function registerAdminRoutes(
 
     return {
       settings: await getRepositoryTemplateSettings(params.db, repositoryId)
+    };
+  });
+
+  app.put("/api/admin/repositories/:repositoryId/signing-settings", async (request, reply) => {
+    const { repositoryId } = request.params as { repositoryId: string };
+    const body = SelectSigningModeRequestSchema.parse({
+      ...(request.body as Record<string, unknown>),
+      repositoryId
+    });
+    const context = await requireAdminRepository(params, request, reply, repositoryId);
+    if (!context) {
+      return;
+    }
+
+    if (body.signingMode === "dropbox_sign") {
+      const integration = await getDropboxSignIntegration(params.db, repositoryId);
+      if (!integration) {
+        return reply.code(400).send({ error: "Add Dropbox Sign credentials before enabling this mode" });
+      }
+    }
+
+    await selectSigningMode({
+      db: params.db,
+      repositoryId,
+      signingMode: body.signingMode,
+      session: context.session
+    });
+
+    return {
+      signingSettings: await getRepositorySigningSettings(params.db, repositoryId, params.config)
+    };
+  });
+
+  app.put("/api/admin/repositories/:repositoryId/dropbox-sign-integration", async (request, reply) => {
+    const { repositoryId } = request.params as { repositoryId: string };
+    const body = SaveDropboxSignIntegrationRequestSchema.parse({
+      ...(request.body as Record<string, unknown>),
+      repositoryId
+    });
+    const context = await requireAdminRepository(params, request, reply, repositoryId);
+    if (!context) {
+      return;
+    }
+
+    await saveDropboxSignIntegration({
+      db: params.db,
+      config: params.config,
+      repositoryId,
+      apiKey: body.apiKey,
+      session: context.session
+    });
+
+    return {
+      signingSettings: await getRepositorySigningSettings(params.db, repositoryId, params.config)
     };
   });
 
@@ -543,7 +565,14 @@ async function listTemplatesForRepository(
   ]);
 
   const templates = [...defaultTemplates, ...globalCustomTemplates, ...perRepoTemplates];
-  return Promise.all(templates.map((template) => toTemplateSummary(db, template)));
+  const latestVersions = await getLatestTemplateVersionsByTemplateIds(
+    db,
+    templates.map((template) => template.claTemplateId)
+  );
+
+  return templates.map((template) =>
+    toTemplateSummary(template, latestVersions.get(template.claTemplateId) ?? null)
+  );
 }
 
 async function ensureDefaultTemplates(db: DbClient): Promise<ClaTemplate[]> {
@@ -616,12 +645,18 @@ async function createDefaultTemplate(
   return created;
 }
 
-async function toTemplateSummary(
+async function toTemplateSummaryForDb(
   db: DbClient,
   template: ClaTemplate
 ): Promise<TemplateSummary> {
   const latestVersion = await getLatestTemplateVersion(db, template.claTemplateId);
+  return toTemplateSummary(template, latestVersion);
+}
 
+function toTemplateSummary(
+  template: ClaTemplate,
+  latestVersion: ClaTemplateVersion | null
+): TemplateSummary {
   return {
     templateId: template.claTemplateId,
     name: template.name,
@@ -632,15 +667,35 @@ async function toTemplateSummary(
   };
 }
 
+async function getLatestTemplateVersionsByTemplateIds(
+  db: DbClient,
+  templateIds: string[]
+): Promise<Map<string, ClaTemplateVersion>> {
+  if (templateIds.length === 0) {
+    return new Map();
+  }
+
+  const versions = await db.query.claTemplateVersions.findMany({
+    where: (table) => inArray(table.claTemplateId, templateIds)
+  });
+
+  const latestByTemplateId = new Map<string, ClaTemplateVersion>();
+  for (const version of versions) {
+    const current = latestByTemplateId.get(version.claTemplateId);
+    if (!current || compareByCreatedAtDesc(version, current) < 0) {
+      latestByTemplateId.set(version.claTemplateId, version);
+    }
+  }
+
+  return latestByTemplateId;
+}
+
 async function getLatestTemplateVersion(
   db: DbClient,
   templateId: string
 ): Promise<ClaTemplateVersion | null> {
-  const versions = await db.query.claTemplateVersions.findMany({
-    where: (table) => eq(table.claTemplateId, templateId)
-  });
-
-  return versions.sort(compareByCreatedAtDesc)[0] ?? null;
+  const latestVersions = await getLatestTemplateVersionsByTemplateIds(db, [templateId]);
+  return latestVersions.get(templateId) ?? null;
 }
 
 function toTemplateVersion(version: ClaTemplateVersion): TemplateVersion {
@@ -649,7 +704,10 @@ function toTemplateVersion(version: ClaTemplateVersion): TemplateVersion {
     templateId: version.claTemplateId,
     title: version.title,
     versionHash: version.versionHash,
+    contentFormat: version.contentFormat,
     body: version.body,
+    pdfUrl: version.pdfUrl,
+    pdfFileName: version.pdfFileName,
     createdByLogin: version.createdByLogin,
     createdAt: version.createdAt.toISOString()
   };
@@ -692,6 +750,35 @@ async function getRepositoryTemplateSettings(
     updatedByLogin: settings.updatedByLogin,
     updatedAt: settings.updatedAt.toISOString()
   };
+}
+
+async function getRepositorySigningSettings(
+  db: DbClient,
+  repositoryId: string,
+  config: AppConfig
+): Promise<RepositorySigningSettings> {
+  const [settings, integration] = await Promise.all([
+    db.query.repositorySigningSettings.findFirst({
+      where: (table) => eq(table.repositoryId, repositoryId)
+    }),
+    getDropboxSignIntegration(db, repositoryId)
+  ]);
+
+  return {
+    repositoryId,
+    signingMode: settings?.signingMode ?? "simple",
+    dropboxSignConfigured: Boolean(integration),
+    dropboxSignApiKeyLast4: integration?.apiKeyLast4 ?? null,
+    dropboxSignCallbackUrl: new URL("/api/sign/dropbox/webhook", config.PUBLIC_APP_URL).toString(),
+    updatedByLogin: settings?.updatedByLogin ?? integration?.updatedByLogin ?? null,
+    updatedAt: (settings?.updatedAt ?? integration?.updatedAt)?.toISOString() ?? null
+  };
+}
+
+async function getDropboxSignIntegration(db: DbClient, repositoryId: string) {
+  return db.query.signingProviderIntegrations.findFirst({
+    where: (table) => eq(table.repositoryId, repositoryId)
+  });
 }
 
 async function assertTemplateVersionSelectable(
@@ -739,6 +826,84 @@ async function selectTemplateVersion(params: {
         updatedAt: new Date()
       }
     });
+}
+
+async function selectSigningMode(params: {
+  db: DbClient;
+  repositoryId: string;
+  signingMode: RepositorySigningSettings["signingMode"];
+  session: CurrentSession;
+}): Promise<void> {
+  const integration = params.signingMode === "dropbox_sign"
+    ? await getDropboxSignIntegration(params.db, params.repositoryId)
+    : null;
+
+  await params.db
+    .insert(repositorySigningSettings)
+    .values({
+      repositoryId: params.repositoryId,
+      signingMode: params.signingMode,
+      signingProviderIntegrationId: integration?.signingProviderIntegrationId ?? null,
+      updatedByGithubUserId: params.session.user.githubUserId,
+      updatedByLogin: params.session.user.login
+    })
+    .onConflictDoUpdate({
+      target: repositorySigningSettings.repositoryId,
+      set: {
+        signingMode: params.signingMode,
+        signingProviderIntegrationId: integration?.signingProviderIntegrationId ?? null,
+        updatedByGithubUserId: params.session.user.githubUserId,
+        updatedByLogin: params.session.user.login,
+        updatedAt: new Date()
+      }
+    });
+}
+
+async function saveDropboxSignIntegration(params: {
+  db: DbClient;
+  config: AppConfig;
+  repositoryId: string;
+  apiKey?: string;
+  session: CurrentSession;
+}): Promise<void> {
+  const existing = await getDropboxSignIntegration(params.db, params.repositoryId);
+  if (!params.apiKey && !existing) {
+    throw new Error("Dropbox Sign API key is required");
+  }
+
+  const integrationId = createId("signint");
+  const encryptedApiKey = params.apiKey
+    ? encryptSigningCredential(params.config, params.apiKey)
+    : existing!.encryptedApiKey;
+  const apiKeyLast4 = params.apiKey ? keySuffix(params.apiKey) : existing!.apiKeyLast4;
+
+  await params.db
+    .insert(signingProviderIntegrations)
+    .values({
+      signingProviderIntegrationId: integrationId,
+      repositoryId: params.repositoryId,
+      provider: "dropbox_sign",
+      encryptedApiKey,
+      apiKeyLast4,
+      createdByGithubUserId: params.session.user.githubUserId,
+      createdByLogin: params.session.user.login,
+      updatedByGithubUserId: params.session.user.githubUserId,
+      updatedByLogin: params.session.user.login
+    })
+    .onConflictDoUpdate({
+      target: [signingProviderIntegrations.repositoryId, signingProviderIntegrations.provider],
+      set: {
+        encryptedApiKey,
+        apiKeyLast4,
+        updatedByGithubUserId: params.session.user.githubUserId,
+        updatedByLogin: params.session.user.login,
+        updatedAt: new Date()
+      }
+    });
+}
+
+function keySuffix(value: string): string {
+  return value.slice(-4);
 }
 
 async function listSignatureRecords(
@@ -865,6 +1030,9 @@ async function getRepositoryStats(
   const settings = await db.query.repositoryTemplateSettings.findFirst({
     where: (table) => eq(table.repositoryId, repositoryId)
   });
+  const signingSettings = await db.query.repositorySigningSettings.findFirst({
+    where: (table) => eq(table.repositoryId, repositoryId)
+  });
 
   let selectedTemplateName: string | null = null;
   if (settings?.mode === "managed" && settings.claTemplateVersionId) {
@@ -911,6 +1079,7 @@ async function getRepositoryStats(
 
   return {
     templateMode: settings?.mode === "managed" ? "managed" : "repository",
+    signingMode: signingSettings?.signingMode ?? "simple",
     selectedTemplateName,
     signatureCount: personalRows.length + corporateRows.length,
     pullRequestCheckCount: checkRows.length,

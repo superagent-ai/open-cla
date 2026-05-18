@@ -22,6 +22,7 @@ export const AdminRepositorySchema = z.object({
   stats: z
     .object({
       templateMode: z.enum(["repository", "managed"]),
+      signingMode: z.enum(["simple", "dropbox_sign"]),
       selectedTemplateName: z.string().nullable(),
       signatureCount: z.number(),
       pullRequestCheckCount: z.number(),
@@ -44,12 +45,18 @@ export type AdminInstallation = z.infer<typeof AdminInstallationSchema>;
 export const TemplateSourceSchema = z.enum(["default", "uploaded"]);
 export type TemplateSource = z.infer<typeof TemplateSourceSchema>;
 
+export const ClaContentFormatSchema = z.enum(["markdown", "pdf"]);
+export type ClaContentFormat = z.infer<typeof ClaContentFormatSchema>;
+
 export const TemplateVersionSchema = z.object({
   templateVersionId: z.string(),
   templateId: z.string(),
   title: z.string(),
   versionHash: z.string(),
+  contentFormat: ClaContentFormatSchema,
   body: z.string(),
+  pdfUrl: z.string().nullable(),
+  pdfFileName: z.string().nullable(),
   createdByLogin: z.string().nullable(),
   createdAt: z.string()
 });
@@ -76,19 +83,39 @@ export const RepositoryTemplateSettingsSchema = z.object({
 });
 export type RepositoryTemplateSettings = z.infer<typeof RepositoryTemplateSettingsSchema>;
 
+export const RepositorySigningModeSchema = z.enum(["simple", "dropbox_sign"]);
+export type RepositorySigningMode = z.infer<typeof RepositorySigningModeSchema>;
+
+export const RepositorySigningSettingsSchema = z.object({
+  repositoryId: z.string(),
+  signingMode: RepositorySigningModeSchema,
+  dropboxSignConfigured: z.boolean(),
+  dropboxSignApiKeyLast4: z.string().nullable(),
+  dropboxSignCallbackUrl: z.string(),
+  updatedByLogin: z.string().nullable(),
+  updatedAt: z.string().nullable()
+});
+export type RepositorySigningSettings = z.infer<typeof RepositorySigningSettingsSchema>;
+
 export const TemplatesResponseSchema = z.object({
   repository: AdminRepositorySchema,
   settings: RepositoryTemplateSettingsSchema,
+  signingSettings: RepositorySigningSettingsSchema,
   templates: z.array(TemplateSummarySchema)
 });
 export type TemplatesResponse = z.infer<typeof TemplatesResponseSchema>;
+
+const pdfUploadFields = {
+  pdfFileName: z.string().trim().min(1).max(255),
+  pdfBase64: z.string().min(1)
+};
 
 export const CreateTemplateRequestSchema = z.object({
   repositoryId: z.string().min(1),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
   title: z.string().trim().min(1).max(200),
-  body: z.string().trim().min(1)
+  ...pdfUploadFields
 });
 export type CreateTemplateRequest = z.infer<typeof CreateTemplateRequestSchema>;
 
@@ -108,16 +135,16 @@ export const CreateGlobalTemplateRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
   title: z.string().trim().min(1).max(200),
-  body: z.string().trim().min(1)
+  ...pdfUploadFields
 });
 export type CreateGlobalTemplateRequest = z.infer<typeof CreateGlobalTemplateRequestSchema>;
 
-export const UpdateGlobalTemplateRequestSchema = CreateGlobalTemplateRequestSchema;
-export type UpdateGlobalTemplateRequest = CreateGlobalTemplateRequest;
-
 export const TemplateDetailResponseSchema = z.object({
   template: GlobalTemplateSummarySchema,
-  body: z.string()
+  contentFormat: ClaContentFormatSchema,
+  body: z.string(),
+  pdfUrl: z.string().nullable(),
+  pdfFileName: z.string().nullable()
 });
 export type TemplateDetailResponse = z.infer<typeof TemplateDetailResponseSchema>;
 
@@ -139,6 +166,18 @@ export const SelectTemplateRequestSchema = z.object({
   templateVersionId: z.string().min(1).nullable()
 });
 export type SelectTemplateRequest = z.infer<typeof SelectTemplateRequestSchema>;
+
+export const SelectSigningModeRequestSchema = z.object({
+  repositoryId: z.string().min(1),
+  signingMode: RepositorySigningModeSchema
+});
+export type SelectSigningModeRequest = z.infer<typeof SelectSigningModeRequestSchema>;
+
+export const SaveDropboxSignIntegrationRequestSchema = z.object({
+  repositoryId: z.string().min(1),
+  apiKey: z.string().trim().optional()
+});
+export type SaveDropboxSignIntegrationRequest = z.infer<typeof SaveDropboxSignIntegrationRequestSchema>;
 
 export const ClaDocumentSourceSchema = z.enum(["repository", "default_template", "managed_template"]);
 export type ClaDocumentSource = z.infer<typeof ClaDocumentSourceSchema>;
@@ -162,9 +201,13 @@ export const SigningPageResponseSchema = z.object({
     documentId: z.string(),
     title: z.string(),
     body: z.string(),
+    contentFormat: ClaContentFormatSchema,
+    pdfUrl: z.string().nullable(),
     versionHash: z.string(),
     source: ClaDocumentSourceSchema
   }),
+  signingMode: RepositorySigningModeSchema,
+  dropboxSignConfigured: z.boolean(),
   context: SigningContextSchema
 });
 export type SigningPageResponse = z.infer<typeof SigningPageResponseSchema>;
@@ -172,6 +215,7 @@ export type SigningPageResponse = z.infer<typeof SigningPageResponseSchema>;
 export const SigningSubmitResponseSchema = z.object({
   ok: z.boolean(),
   message: z.string(),
+  dropboxSignEmailSent: z.boolean().optional(),
   context: SigningContextSchema
 });
 export type SigningSubmitResponse = z.infer<typeof SigningSubmitResponseSchema>;

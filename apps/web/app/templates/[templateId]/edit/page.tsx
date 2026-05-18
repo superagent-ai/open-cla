@@ -1,8 +1,4 @@
-import type { AdminUser, TemplateDetailResponse } from "@superagent-cla/shared";
-import { notFound, redirect } from "next/navigation";
-
-import { TemplateEditDashboard } from "@/components/template-edit-dashboard";
-import { ApiError, adminApiFetch, browserApiBaseUrl } from "@/lib/api";
+import { redirect } from "next/navigation";
 
 type EditTemplatePageProps = {
   params: Promise<{ templateId: string }>;
@@ -10,36 +6,5 @@ type EditTemplatePageProps = {
 
 export default async function EditTemplatePage({ params }: EditTemplatePageProps) {
   const { templateId } = await params;
-
-  try {
-    const [user, detail] = await Promise.all([
-      adminApiFetch<AdminUser>("/api/admin/me"),
-      adminApiFetch<TemplateDetailResponse>(`/api/admin/templates/${templateId}`)
-    ]);
-
-    if (!detail.template.isMine) {
-      redirect(`/templates/${templateId}`);
-    }
-
-    return (
-      <TemplateEditDashboard
-        apiBaseUrl={browserApiBaseUrl}
-        user={user}
-        templateId={templateId}
-        template={detail.template}
-        body={detail.body}
-      />
-    );
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 401) {
-        redirect("/");
-      }
-      if (error.status === 403 || error.status === 404) {
-        notFound();
-      }
-    }
-
-    throw error;
-  }
+  redirect(`/templates/${templateId}`);
 }

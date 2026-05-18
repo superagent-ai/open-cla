@@ -1,6 +1,7 @@
 import type { App } from "@octokit/app";
 import type { PullRequestEvent } from "@octokit/webhooks-types";
 import type {
+  RepositorySigningMode,
   SigningContext,
   SigningPageResponse,
   SigningSubmitResponse
@@ -8,17 +9,28 @@ import type {
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { and, eq } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
+import { signClaPdfPath } from "../cla/pdfPaths.js";
 import { resolveClaForRepository } from "../cla/resolveCla.js";
+import { loadClaPdfBytes } from "../signing/loadClaPdf.js";
 import type { DbClient } from "../db/client.js";
 import {
   claDocuments,
   corporateAgreements,
   personalSignatures,
+  repositorySigningSettings,
+  signingProviderIntegrations,
+  signatureRequests,
   repositories
 } from "../db/schema.js";
 import { getInstallationOctokit } from "../github/app.js";
 import { handlePullRequestWebhook } from "../webhooks/pullRequest.js";
 import { createId } from "../utils/ids.js";
+import {
+  createDropboxSigningRequest,
+  getDropboxEventSignatureRequestId,
+  verifyDropboxEventCallback
+} from "../signing/dropboxSign.js";
+import { decryptSigningCredential } from "../signing/credentials.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
 
 type SignQuery = {
@@ -44,6 +56,8 @@ type SigningState = {
   context: SigningContext;
   repository: typeof repositories.$inferSelect;
   cla: Awaited<ReturnType<typeof resolveClaForRepository>>;
+  signingMode: RepositorySigningMode;
+  dropboxSignConfigured: boolean;
 };
 
 export async function registerSignRoutes(
@@ -81,6 +95,38 @@ export async function registerSignRoutes(
     return toSigningPageResponse(session, state);
   });
 
+  app.get("/api/sign/cla/:documentId/pdf", async (request, reply) => {
+    const session = await getCurrentSession(params.db, request);
+    if (!session) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+
+    const { documentId } = request.params as { documentId: string };
+    const signingState = await loadSigningState(params, request.query as SignQuery);
+    if (!signingState.ok) {
+      return reply.code(signingState.statusCode).send({ error: signingState.message });
+    }
+
+    if (signingState.cla.document.claDocumentId !== documentId) {
+      return reply.code(403).send({ error: "CLA document is not available for this repository" });
+    }
+
+    try {
+      const pdfBytes = await loadClaPdfBytes({
+        pdfData: signingState.cla.document.pdfData ?? null,
+        pdfUrl: signingState.cla.document.pdfUrl
+      });
+      return reply
+        .header("content-type", "application/pdf")
+        .header("cache-control", "private, max-age=3600")
+        .send(Buffer.from(pdfBytes));
+    } catch (error) {
+      return reply.code(404).send({
+        error: error instanceof Error ? error.message : "CLA PDF not found"
+      });
+    }
+  });
+
   app.post("/api/sign/personal", async (request, reply) => {
     const session = await getCurrentSession(params.db, request);
     if (!session) {
@@ -93,8 +139,45 @@ export async function registerSignRoutes(
       return reply.code(400).send({ error: "Missing owner or repository in signing request." });
     }
 
+    const state = await loadRepositorySigningState(params.db, context);
+    if (!state) {
+      return reply.code(404).send({ error: "Repository not found" });
+    }
+
     const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
-    await recordPersonalSignature(params.db, session, request, claDocument);
+    if (state.signingMode === "dropbox_sign") {
+      const integration = await getRepositoryDropboxIntegration(params.db, state.repository.repositoryId);
+      if (!integration) {
+        return reply.code(400).send({ error: "Dropbox Sign credentials are not configured for this repository" });
+      }
+      if (!normalizeEmail(body.signerEmail)) {
+        return reply.code(400).send({ error: "Dropbox Sign requires a valid signer email address" });
+      }
+      try {
+        const response = await createDropboxSignatureRequestResponse({
+          db: params.db,
+          config: params.config,
+          kind: "personal",
+          session,
+          context,
+          repository: state.repository,
+          integration,
+          claDocument,
+          claTitle: body.claTitle,
+          signerEmail: body.signerEmail
+        });
+        return response;
+      } catch (error) {
+        return reply.code(502).send({ error: signingProviderErrorMessage(error) });
+      }
+    }
+
+    await recordPersonalSignature(
+      params.db,
+      { githubUserId: session.user.githubUserId, login: session.user.login },
+      { signerIp: getClientIp(request), userAgent: getUserAgent(request) },
+      claDocument
+    );
     await triggerPullRequestRecheck({
       db: params.db,
       githubApp: params.githubApp,
@@ -129,6 +212,11 @@ export async function registerSignRoutes(
       return reply.code(400).send({ error: "Missing organization login" });
     }
 
+    const state = await loadRepositorySigningState(params.db, context);
+    if (!state) {
+      return reply.code(404).send({ error: "Repository not found" });
+    }
+
     const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
     let org: GitHubOrg;
     try {
@@ -139,7 +227,40 @@ export async function registerSignRoutes(
       return reply.code(403).send({ error: message });
     }
 
-    await recordCorporateAgreement(params.db, session, org, claDocument);
+    if (state.signingMode === "dropbox_sign") {
+      const integration = await getRepositoryDropboxIntegration(params.db, state.repository.repositoryId);
+      if (!integration) {
+        return reply.code(400).send({ error: "Dropbox Sign credentials are not configured for this repository" });
+      }
+      if (!normalizeEmail(body.signerEmail)) {
+        return reply.code(400).send({ error: "Dropbox Sign requires a valid signer email address" });
+      }
+      try {
+        const response = await createDropboxSignatureRequestResponse({
+          db: params.db,
+          config: params.config,
+          kind: "corporate",
+          session,
+          context,
+          repository: state.repository,
+          integration,
+          claDocument,
+          claTitle: body.claTitle,
+          signerEmail: body.signerEmail,
+          org
+        });
+        return response;
+      } catch (error) {
+        return reply.code(502).send({ error: signingProviderErrorMessage(error) });
+      }
+    }
+
+    await recordCorporateAgreement(
+      params.db,
+      { githubUserId: session.user.githubUserId, login: session.user.login },
+      org,
+      claDocument
+    );
     await triggerPullRequestRecheck({
       db: params.db,
       githubApp: params.githubApp,
@@ -162,7 +283,12 @@ export async function registerSignRoutes(
     const body = request.body as FormBody;
     const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
 
-    await recordPersonalSignature(params.db, session, request, claDocument);
+    await recordPersonalSignature(
+      params.db,
+      { githubUserId: session.user.githubUserId, login: session.user.login },
+      { signerIp: getClientIp(request), userAgent: getUserAgent(request) },
+      claDocument
+    );
 
     await triggerPullRequestRecheck({
       db: params.db,
@@ -190,7 +316,12 @@ export async function registerSignRoutes(
     await assertCanSignForOrg(session.accessToken, orgLogin);
     const org = await githubFetch<GitHubOrg>(session.accessToken, `/orgs/${encodeURIComponent(orgLogin)}`);
 
-    await recordCorporateAgreement(params.db, session, org, claDocument);
+    await recordCorporateAgreement(
+      params.db,
+      { githubUserId: session.user.githubUserId, login: session.user.login },
+      org,
+      claDocument
+    );
 
     await triggerPullRequestRecheck({
       db: params.db,
@@ -207,6 +338,17 @@ export async function registerSignRoutes(
         `<p>The corporate CLA for <strong>${escapeHtml(org.login)}</strong> has been recorded.</p><p><a href="/">Done</a></p>`
       )
     );
+  });
+
+  app.post("/api/sign/dropbox/webhook", async (request, reply) => {
+    await handleDropboxSignEvent({
+      db: params.db,
+      githubApp: params.githubApp,
+      config: params.config,
+      body: request.body
+    });
+
+    return reply.type("text/plain").send("Hello API Event Received");
   });
 }
 
@@ -257,7 +399,8 @@ async function loadSigningState(
     ok: true,
     context,
     repository,
-    cla
+    cla,
+    ...(await getRepositorySigningState(params.db, repository.repositoryId))
   };
 }
 
@@ -280,9 +423,16 @@ function toSigningPageResponse(
       documentId: state.cla.document.claDocumentId,
       title: state.cla.title,
       body: state.cla.body,
+      contentFormat: state.cla.contentFormat,
+      pdfUrl:
+        state.cla.contentFormat === "pdf"
+          ? signClaPdfPath(state.cla.document.claDocumentId, state.context)
+          : state.cla.pdfUrl,
       versionHash: state.cla.versionHash,
       source: state.cla.source
     },
+    signingMode: state.signingMode,
+    dropboxSignConfigured: state.dropboxSignConfigured,
     context: state.context
   };
 }
@@ -307,31 +457,163 @@ function parseSigningContext(input: {
   };
 }
 
+async function loadRepositorySigningState(
+  db: DbClient,
+  context: SigningContext
+): Promise<{
+  repository: typeof repositories.$inferSelect;
+  signingMode: RepositorySigningMode;
+  dropboxSignConfigured: boolean;
+} | null> {
+  const repository = await db.query.repositories.findFirst({
+    where: (table) => and(eq(table.owner, context.owner), eq(table.name, context.repo))
+  });
+  if (!repository) {
+    return null;
+  }
+
+  return {
+    repository,
+    ...(await getRepositorySigningState(db, repository.repositoryId))
+  };
+}
+
+async function getRepositorySigningState(
+  db: DbClient,
+  repositoryId: string
+): Promise<{ signingMode: RepositorySigningMode; dropboxSignConfigured: boolean }> {
+  const [settings, integration] = await Promise.all([
+    db.query.repositorySigningSettings.findFirst({
+      where: (table) => eq(table.repositoryId, repositoryId)
+    }),
+    getRepositoryDropboxIntegration(db, repositoryId)
+  ]);
+  return {
+    signingMode: settings?.signingMode ?? "simple",
+    dropboxSignConfigured: Boolean(integration)
+  };
+}
+
+async function getRepositoryDropboxIntegration(db: DbClient, repositoryId: string) {
+  return db.query.signingProviderIntegrations.findFirst({
+    where: (table) => and(eq(table.repositoryId, repositoryId), eq(table.provider, "dropbox_sign"))
+  });
+}
+
+async function createDropboxSignatureRequestResponse(params: {
+  db: DbClient;
+  config: AppConfig;
+  kind: "personal" | "corporate";
+  session: CurrentSession;
+  context: SigningContext;
+  repository: typeof repositories.$inferSelect;
+  integration: typeof signingProviderIntegrations.$inferSelect;
+  claDocument: Awaited<ReturnType<typeof getClaDocument>>;
+  claTitle?: string;
+  signerEmail?: string;
+  org?: GitHubOrg;
+}): Promise<SigningSubmitResponse> {
+  const signerEmail = normalizeEmail(params.signerEmail);
+  if (!signerEmail) {
+    throw new Error("Dropbox Sign requires a valid signer email address");
+  }
+
+  const result = await createDropboxSigningRequest({
+    config: params.config,
+    credentials: {
+      apiKey: decryptSigningCredential(params.config, params.integration.encryptedApiKey)
+    },
+    title: params.claTitle?.trim() || "Contributor License Agreement",
+    body: params.claDocument.body,
+    contentFormat: params.claDocument.contentFormat,
+    pdfData: params.claDocument.pdfData,
+    pdfUrl: params.claDocument.pdfUrl,
+    versionHash: params.claDocument.versionHash,
+    signerName: params.session.user.login,
+    signerEmail,
+    repositoryFullName: params.repository.fullName,
+    kind: params.kind,
+    context: params.context,
+    orgLogin: params.org?.login,
+    signingRedirectUrl: buildDropboxSigningRedirectUrl(params.config, params.context, params.kind)
+  });
+
+  await params.db.insert(signatureRequests).values({
+    signatureRequestId: createId("sigreq"),
+    kind: params.kind,
+    provider: "dropbox_sign",
+    status: "pending",
+    signingProviderIntegrationId: params.integration.signingProviderIntegrationId,
+    repositoryId: params.repository.repositoryId,
+    githubUserId: params.session.user.githubUserId,
+    signerLogin: params.session.user.login,
+    signerEmail,
+    orgId: params.org ? String(params.org.id) : null,
+    orgLogin: params.org?.login ?? null,
+    claDocumentId: params.claDocument.claDocumentId,
+    claVersionHash: params.claDocument.versionHash,
+    owner: params.context.owner,
+    repo: params.context.repo,
+    pull: params.context.pull,
+    sha: params.context.sha,
+    providerRequestId: result.providerRequestId,
+    providerSignatureId: result.providerSignatureId
+  });
+
+  return {
+    ok: true,
+    message: `Dropbox Sign emailed a signing link to ${signerEmail}.`,
+    dropboxSignEmailSent: true,
+    context: params.context
+  };
+}
+
+function buildDropboxSigningRedirectUrl(
+  config: AppConfig,
+  context: SigningContext,
+  kind: "personal" | "corporate"
+): string {
+  if (context.owner && context.repo && context.pull) {
+    const owner = encodeURIComponent(context.owner);
+    const repo = encodeURIComponent(context.repo);
+    const pull = encodeURIComponent(context.pull);
+    return `https://github.com/${owner}/${repo}/pull/${pull}`;
+  }
+
+  const params = new URLSearchParams();
+  if (context.owner) params.set("owner", context.owner);
+  if (context.repo) params.set("repo", context.repo);
+  if (context.pull) params.set("pull", context.pull);
+  if (context.sha) params.set("sha", context.sha);
+  params.set("dropboxSigned", kind);
+  return new URL(`/sign?${params.toString()}`, config.ADMIN_WEB_URL).toString();
+}
+
 async function recordPersonalSignature(
   db: DbClient,
-  session: CurrentSession,
-  request: FastifyRequest,
+  signer: { githubUserId: string; login: string },
+  metadata: { signerIp?: string; userAgent?: string },
   claDocument: Awaited<ReturnType<typeof getClaDocument>>
 ): Promise<void> {
   await db
     .insert(personalSignatures)
     .values({
       signatureId: createId("sig"),
-      githubUserId: session.user.githubUserId,
+      githubUserId: signer.githubUserId,
       claDocumentId: claDocument.claDocumentId,
       claVersionHash: claDocument.versionHash,
-      signerLogin: session.user.login,
-      signerIp: getClientIp(request),
-      userAgent: getUserAgent(request)
+      signerLogin: signer.login,
+      signerIp: metadata.signerIp,
+      userAgent: metadata.userAgent
     })
     .onConflictDoUpdate({
       target: [personalSignatures.githubUserId, personalSignatures.claVersionHash],
       set: {
         revokedAt: null,
         signedAt: new Date(),
-        signerLogin: session.user.login,
-        signerIp: getClientIp(request),
-        userAgent: getUserAgent(request),
+        signerLogin: signer.login,
+        signerIp: metadata.signerIp,
+        userAgent: metadata.userAgent,
         updatedAt: new Date()
       }
     });
@@ -339,7 +621,7 @@ async function recordPersonalSignature(
 
 async function recordCorporateAgreement(
   db: DbClient,
-  session: CurrentSession,
+  signer: { githubUserId: string; login: string },
   org: GitHubOrg,
   claDocument: Awaited<ReturnType<typeof getClaDocument>>
 ): Promise<void> {
@@ -351,23 +633,163 @@ async function recordCorporateAgreement(
       orgLogin: org.login,
       claDocumentId: claDocument.claDocumentId,
       claVersionHash: claDocument.versionHash,
-      authorizedSignerUserId: session.user.githubUserId,
-      authorizedSignerLogin: session.user.login
+      authorizedSignerUserId: signer.githubUserId,
+      authorizedSignerLogin: signer.login
     })
     .onConflictDoUpdate({
       target: [corporateAgreements.orgId, corporateAgreements.claVersionHash],
       set: {
-        authorizedSignerUserId: session.user.githubUserId,
-        authorizedSignerLogin: session.user.login,
+        authorizedSignerUserId: signer.githubUserId,
+        authorizedSignerLogin: signer.login,
         effectiveUntil: null,
         updatedAt: new Date()
       }
     });
 }
 
+async function handleDropboxSignEvent(params: {
+  db: DbClient;
+  githubApp: App;
+  config: AppConfig;
+  body: unknown;
+}): Promise<void> {
+  const providerRequestId = getDropboxEventSignatureRequestId(params.body);
+  if (!providerRequestId) {
+    return;
+  }
+
+  const requestRow = await params.db.query.signatureRequests.findFirst({
+    where: (table) =>
+      and(
+        eq(table.provider, "dropbox_sign"),
+        eq(table.providerRequestId, providerRequestId)
+      )
+  });
+  if (!requestRow) {
+    return;
+  }
+
+  const integration = await params.db.query.signingProviderIntegrations.findFirst({
+    where: (table) =>
+      eq(table.signingProviderIntegrationId, requestRow.signingProviderIntegrationId)
+  });
+  if (!integration) {
+    return;
+  }
+
+  const event = verifyDropboxEventCallback(
+    decryptSigningCredential(params.config, integration.encryptedApiKey),
+    params.body
+  );
+  if (!event || event.signatureRequestId !== providerRequestId) {
+    return;
+  }
+
+  if (event.eventType === "signature_request_signed") {
+    await params.db
+      .update(signatureRequests)
+      .set({
+        status: requestRow.status === "completed" ? "completed" : "signed",
+        providerPayload: event.payload,
+        updatedAt: new Date()
+      })
+      .where(eq(signatureRequests.signatureRequestId, requestRow.signatureRequestId));
+    return;
+  }
+
+  if (["signature_request_declined", "signature_request_canceled", "signature_request_expired"].includes(event.eventType)) {
+    await params.db
+      .update(signatureRequests)
+      .set({
+        status: event.eventType === "signature_request_expired" ? "expired" : "declined",
+        providerPayload: event.payload,
+        updatedAt: new Date()
+      })
+      .where(eq(signatureRequests.signatureRequestId, requestRow.signatureRequestId));
+    return;
+  }
+
+  if (event.eventType !== "signature_request_all_signed") {
+    return;
+  }
+
+  if (requestRow.status === "completed") {
+    return;
+  }
+
+  const completedAt = eventTimeToDate(event.eventTime);
+  const claDocument = await getClaDocument(
+    params.db,
+    requestRow.claDocumentId,
+    requestRow.claVersionHash
+  );
+  const signer = {
+    githubUserId: requestRow.githubUserId,
+    login: requestRow.signerLogin
+  };
+
+  if (requestRow.kind === "personal") {
+    await recordPersonalSignature(params.db, signer, {}, claDocument);
+  } else if (requestRow.orgId && requestRow.orgLogin) {
+    await recordCorporateAgreement(
+      params.db,
+      signer,
+      { id: Number(requestRow.orgId), login: requestRow.orgLogin },
+      claDocument
+    );
+  } else {
+    await params.db
+      .update(signatureRequests)
+      .set({
+        status: "failed",
+        errorMessage: "Completed corporate Dropbox Sign request is missing organization information",
+        providerPayload: event.payload,
+        updatedAt: new Date()
+      })
+      .where(eq(signatureRequests.signatureRequestId, requestRow.signatureRequestId));
+    return;
+  }
+
+  await params.db
+    .update(signatureRequests)
+    .set({
+      status: "completed",
+      completedAt,
+      providerPayload: event.payload,
+      updatedAt: new Date()
+    })
+    .where(eq(signatureRequests.signatureRequestId, requestRow.signatureRequestId));
+
+  await triggerPullRequestRecheck({
+    db: params.db,
+    githubApp: params.githubApp,
+    config: params.config,
+    owner: requestRow.owner,
+    repo: requestRow.repo,
+    pull: requestRow.pull ?? undefined
+  });
+}
+
 function optionalString(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeEmail(value: string | undefined): string | null {
+  const trimmed = value?.trim().toLowerCase();
+  if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function signingProviderErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Signing provider request failed";
+}
+
+function eventTimeToDate(value: string): Date {
+  const epochSeconds = Number(value);
+  return Number.isFinite(epochSeconds) ? new Date(epochSeconds * 1000) : new Date();
 }
 
 function webSignUrl(config: AppConfig, requestUrl: string): string {

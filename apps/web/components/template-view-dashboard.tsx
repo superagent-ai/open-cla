@@ -1,13 +1,22 @@
 "use client";
 
-import type { AdminUser, GlobalTemplateSummary } from "@superagent-cla/shared";
-import { Pencil } from "lucide-react";
-import { useRouter } from "next/navigation";
+import type { AdminUser, ClaContentFormat, GlobalTemplateSummary } from "@superagent-cla/shared";
+import { MoreHorizontal, Trash2 } from "lucide-react";
+import { useState, useTransition } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { DashboardShell } from "@/components/dashboard-shell";
-import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   Breadcrumb,
@@ -17,13 +26,24 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator
 } from "@/components/ui/breadcrumb";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import { deleteTemplateAction } from "@/lib/actions/templates";
 import { cn } from "@/lib/utils";
 
 type TemplateViewDashboardProps = {
   apiBaseUrl: string;
   user: AdminUser;
   template: GlobalTemplateSummary;
+  contentFormat: ClaContentFormat;
   body: string;
+  pdfUrl: string | null;
+  pdfFileName: string | null;
 };
 
 const markdownComponents: Components = {
@@ -67,10 +87,28 @@ export function TemplateViewDashboard({
   apiBaseUrl,
   user,
   template,
-  body
+  contentFormat,
+  body,
+  pdfUrl,
+  pdfFileName
 }: TemplateViewDashboardProps) {
-  const router = useRouter();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
   const versionHash = template.latestVersion?.versionHash.slice(0, 12) ?? null;
+  const isPdf = contentFormat === "pdf" && pdfUrl;
+
+  function runDelete(): void {
+    setActionError(null);
+    startTransition(async () => {
+      try {
+        await deleteTemplateAction(template.templateId);
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : "Unable to delete template");
+        setDeleteOpen(false);
+      }
+    });
+  }
 
   return (
     <DashboardShell apiBaseUrl={apiBaseUrl} user={user}>
@@ -88,17 +126,36 @@ export function TemplateViewDashboard({
             </BreadcrumbList>
           </Breadcrumb>
           {template.isMine ? (
-            <Button onClick={() => router.push(`/templates/${template.templateId}/edit`)} size="sm" type="button">
-              <Pencil className="h-4 w-4" />
-              Edit
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button disabled={isPending} size="icon" type="button" variant="outline">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => setDeleteOpen(true)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
         </div>
+
+        {actionError ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {actionError}
+          </div>
+        ) : null}
 
         <div className="space-y-3 px-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{template.name}</h1>
             <Badge variant="secondary">{template.source === "default" ? "Default" : "Custom"}</Badge>
+            {isPdf ? <Badge variant="outline">PDF</Badge> : null}
             {versionHash ? (
               <span className="text-xs text-muted-foreground">Version {versionHash}</span>
             ) : null}
@@ -108,16 +165,42 @@ export function TemplateViewDashboard({
           ) : null}
         </div>
 
-        <article className="rounded-2xl border bg-card p-6 md:p-8">
-          {body.trim() ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {body}
-            </ReactMarkdown>
-          ) : (
-            <p className="text-sm text-muted-foreground">This template has no body yet.</p>
-          )}
-        </article>
+        {isPdf && pdfUrl ? (
+          <iframe
+            className="h-[min(80vh,900px)] w-full"
+            src={pdfUrl}
+            title="CLA template PDF"
+          />
+        ) : (
+          <article className="rounded-2xl border bg-card p-6 md:p-8">
+            {body.trim() ? (
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                {body}
+              </ReactMarkdown>
+            ) : (
+              <p className="text-sm text-muted-foreground">This template has no content.</p>
+            )}
+          </article>
+        )}
       </div>
+
+      <AlertDialog onOpenChange={setDeleteOpen} open={deleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete template?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes &quot;{template.name}&quot; permanently. Repositories using it will need another template.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={isPending} onClick={runDelete}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardShell>
   );
 }
+

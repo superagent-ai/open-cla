@@ -22,7 +22,10 @@ export default async function TemplatePage({ params }: TemplatePageProps) {
         apiBaseUrl={browserApiBaseUrl}
         user={user}
         template={detail.template}
+        contentFormat={detail.contentFormat}
         body={detail.body}
+        pdfUrl={detail.pdfUrl}
+        pdfFileName={detail.pdfFileName}
       />
     );
   } catch (error) {

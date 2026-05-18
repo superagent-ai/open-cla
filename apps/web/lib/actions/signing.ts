@@ -1,16 +1,27 @@
+"use server";
+
 import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { redirect } from "next/navigation";
 
 import { githubLoginUrl, serverApiBaseUrl } from "@/lib/api";
+import {
+  dropboxEmailSentReturnPath,
+  githubPullRequestUrl,
+  signPagePath,
+  signingContextParams,
+  simpleSignReturnPath,
+  type SigningKind
+} from "@/lib/signing-return-url";
 
-type SigningKind = "personal" | "corporate";
-const POST_REDIRECT_STATUS = 303;
+export async function signPersonalAction(formData: FormData): Promise<void> {
+  await submitSigning("personal", formData);
+}
 
-export async function proxySigningSubmission(
-  request: Request,
-  kind: SigningKind
-): Promise<Response> {
-  const formData = await request.formData();
+export async function signCorporateAction(formData: FormData): Promise<void> {
+  await submitSigning("corporate", formData);
+}
+
+async function submitSigning(kind: SigningKind, formData: FormData): Promise<void> {
   const payload = formPayload(formData, kind);
   const returnPath = signingReturnPath(payload);
   const cookieStore = await cookies();
@@ -26,30 +37,35 @@ export async function proxySigningSubmission(
   });
 
   if (upstream.status === 401) {
-    return NextResponse.redirect(githubLoginUrl(returnPath), { status: POST_REDIRECT_STATUS });
+    redirect(githubLoginUrl(returnPath));
   }
 
-  const redirectParams = signingSearchParams(payload);
   if (upstream.ok) {
-    const pullRequestUrl = githubPullRequestUrl(payload);
-    if (pullRequestUrl) {
-      return NextResponse.redirect(pullRequestUrl, { status: POST_REDIRECT_STATUS });
+    const result = (await upstream.json()) as { dropboxSignEmailSent?: unknown };
+
+    if (result.dropboxSignEmailSent === true) {
+      redirect(dropboxEmailSentReturnPath(payload, kind));
     }
 
-    redirectParams.set("signed", kind);
-  } else {
-    redirectParams.set("error", await readErrorMessage(upstream));
+    const pullRequestUrl = githubPullRequestUrl(payload);
+    if (pullRequestUrl) {
+      redirect(pullRequestUrl);
+    }
+
+    redirect(simpleSignReturnPath(payload, kind));
   }
 
-  return NextResponse.redirect(new URL(`/sign?${redirectParams.toString()}`, request.url), {
-    status: POST_REDIRECT_STATUS
-  });
+  const errorParams = signingContextParams(payload);
+  errorParams.set("error", await readErrorMessage(upstream));
+  redirect(`/sign?${errorParams.toString()}`);
 }
 
 function formPayload(formData: FormData, kind: SigningKind): Record<string, string> {
   const payload: Record<string, string> = {
     claDocumentId: stringValue(formData, "claDocumentId"),
     claVersionHash: stringValue(formData, "claVersionHash"),
+    claTitle: stringValue(formData, "claTitle"),
+    signerEmail: stringValue(formData, "signerEmail"),
     owner: stringValue(formData, "owner"),
     repo: stringValue(formData, "repo"),
     pull: stringValue(formData, "pull"),
@@ -64,29 +80,7 @@ function formPayload(formData: FormData, kind: SigningKind): Record<string, stri
 }
 
 function signingReturnPath(payload: Record<string, string>): string {
-  const params = signingSearchParams(payload);
-  return `/sign${params.toString() ? `?${params.toString()}` : ""}`;
-}
-
-function signingSearchParams(payload: Record<string, string>): URLSearchParams {
-  const params = new URLSearchParams();
-  for (const name of ["owner", "repo", "pull", "sha"]) {
-    if (payload[name]) {
-      params.set(name, payload[name]);
-    }
-  }
-  return params;
-}
-
-function githubPullRequestUrl(payload: Record<string, string>): string | null {
-  if (!payload.owner || !payload.repo || !payload.pull) {
-    return null;
-  }
-
-  const owner = encodeURIComponent(payload.owner);
-  const repo = encodeURIComponent(payload.repo);
-  const pull = encodeURIComponent(payload.pull);
-  return `https://github.com/${owner}/${repo}/pull/${pull}`;
+  return signPagePath(payload);
 }
 
 function stringValue(formData: FormData, name: string): string {
