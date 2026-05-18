@@ -1,7 +1,9 @@
+import { assertSafePdfFetchUrl } from "./safePdfFetchUrl.js";
 import { validatePdfBuffer } from "./validatePdf.js";
 
 export async function fetchPdfFromUrl(url: string): Promise<Uint8Array> {
-  const response = await fetch(url);
+  const safeUrl = await assertSafePdfFetchUrl(url);
+  const response = await fetch(safeUrl, { redirect: "error" });
   if (!response.ok) {
     throw new Error(`Failed to download PDF (${response.status})`);
   }

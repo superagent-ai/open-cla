@@ -10,6 +10,9 @@ export async function loadClaPdfBytes(params: {
   }
 
   if (params.pdfUrl) {
+    if (params.pdfUrl.startsWith("/")) {
+      throw new Error("CLA PDF bytes are not available");
+    }
     return fetchPdfFromUrl(params.pdfUrl);
   }
 

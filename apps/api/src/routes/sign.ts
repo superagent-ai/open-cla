@@ -11,7 +11,7 @@ import { and, eq } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import { signClaPdfPath } from "../cla/pdfPaths.js";
 import { resolveClaForRepository } from "../cla/resolveCla.js";
-import { loadClaDocumentPdfBytes } from "../signing/loadClaPdf.js";
+import { loadClaPdfBytes } from "../signing/loadClaPdf.js";
 import type { DbClient } from "../db/client.js";
 import {
   claDocuments,
@@ -102,15 +102,20 @@ export async function registerSignRoutes(
     }
 
     const { documentId } = request.params as { documentId: string };
-    const document = await params.db.query.claDocuments.findFirst({
-      where: (table) => eq(table.claDocumentId, documentId)
-    });
-    if (!document) {
-      return reply.code(404).send({ error: "CLA document not found" });
+    const signingState = await loadSigningState(params, request.query as SignQuery);
+    if (!signingState.ok) {
+      return reply.code(signingState.statusCode).send({ error: signingState.message });
+    }
+
+    if (signingState.cla.document.claDocumentId !== documentId) {
+      return reply.code(403).send({ error: "CLA document is not available for this repository" });
     }
 
     try {
-      const pdfBytes = await loadClaDocumentPdfBytes(params.db, documentId);
+      const pdfBytes = await loadClaPdfBytes({
+        pdfData: signingState.cla.document.pdfData ?? null,
+        pdfUrl: signingState.cla.document.pdfUrl
+      });
       return reply
         .header("content-type", "application/pdf")
         .header("cache-control", "private, max-age=3600")
@@ -421,7 +426,7 @@ function toSigningPageResponse(
       contentFormat: state.cla.contentFormat,
       pdfUrl:
         state.cla.contentFormat === "pdf"
-          ? signClaPdfPath(state.cla.document.claDocumentId)
+          ? signClaPdfPath(state.cla.document.claDocumentId, state.context)
           : state.cla.pdfUrl,
       versionHash: state.cla.versionHash,
       source: state.cla.source

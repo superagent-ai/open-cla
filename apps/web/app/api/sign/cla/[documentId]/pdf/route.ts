@@ -6,11 +6,12 @@ type RouteContext = {
   params: Promise<{ documentId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext): Promise<Response> {
+export async function GET(request: Request, context: RouteContext): Promise<Response> {
   const { documentId } = await context.params;
   const cookieStore = await cookies();
+  const query = new URL(request.url).search;
 
-  const upstream = await fetch(`${serverApiBaseUrl}/api/sign/cla/${documentId}/pdf`, {
+  const upstream = await fetch(`${serverApiBaseUrl}/api/sign/cla/${documentId}/pdf${query}`, {
     headers: {
       cookie: cookieStore.toString()
     },

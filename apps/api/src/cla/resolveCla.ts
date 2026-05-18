@@ -8,7 +8,6 @@ import {
   type ClaDocument
 } from "../db/schema.js";
 import type { InstallationOctokit } from "../github/app.js";
-import { signClaPdfPath } from "./pdfPaths.js";
 import { createId } from "../utils/ids.js";
 import { sha256 } from "../utils/sha.js";
 import { getDefaultTemplate } from "./templates.js";
@@ -169,10 +168,7 @@ async function persistResolvedCla(params: {
 }): Promise<ResolvedCla> {
   const versionHash = params.versionHash ?? sha256(params.body);
   const claDocumentId = createId("cla");
-  const pdfUrl =
-    params.contentFormat === "pdf" && params.pdfData
-      ? signClaPdfPath(claDocumentId)
-      : (params.pdfUrl ?? null);
+  const pdfUrl = params.contentFormat === "pdf" && params.pdfData ? `/api/sign/cla/${claDocumentId}/pdf` : (params.pdfUrl ?? null);
   const existing = await params.db.query.claDocuments.findFirst({
     where: (table, { and, eq }) =>
       and(eq(table.repositoryId, params.repositoryId), eq(table.versionHash, versionHash))
@@ -186,7 +182,7 @@ async function persistResolvedCla(params: {
       contentFormat: existing.contentFormat,
       pdfUrl:
         existing.contentFormat === "pdf" && (existing.pdfData || existing.pdfUrl)
-          ? signClaPdfPath(existing.claDocumentId)
+          ? `/api/sign/cla/${existing.claDocumentId}/pdf`
           : existing.pdfUrl,
       versionHash,
       source: existing.source
