@@ -23,6 +23,7 @@ import {
   repositories
 } from "../db/schema.js";
 import { getInstallationOctokit } from "../github/app.js";
+import { assertActiveOrgOwner, githubUserFetch } from "../github/user.js";
 import { handlePullRequestWebhook } from "../webhooks/pullRequest.js";
 import { createId } from "../utils/ids.js";
 import {
@@ -45,11 +46,6 @@ type FormBody = Record<string, string | undefined>;
 type GitHubOrg = {
   id: number;
   login: string;
-};
-
-type GitHubOrgMembership = {
-  role?: string;
-  state?: string;
 };
 
 type SigningState = {
@@ -220,8 +216,8 @@ export async function registerSignRoutes(
     const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
     let org: GitHubOrg;
     try {
-      await assertCanSignForOrg(session.accessToken, orgLogin);
-      org = await githubFetch<GitHubOrg>(session.accessToken, `/orgs/${encodeURIComponent(orgLogin)}`);
+      await assertActiveOrgOwner(session.accessToken, orgLogin);
+      org = await githubUserFetch<GitHubOrg>(session.accessToken, `/orgs/${encodeURIComponent(orgLogin)}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "GitHub organization verification failed";
       return reply.code(403).send({ error: message });
@@ -313,8 +309,8 @@ export async function registerSignRoutes(
     }
 
     const claDocument = await getClaDocument(params.db, body.claDocumentId, body.claVersionHash);
-    await assertCanSignForOrg(session.accessToken, orgLogin);
-    const org = await githubFetch<GitHubOrg>(session.accessToken, `/orgs/${encodeURIComponent(orgLogin)}`);
+    await assertActiveOrgOwner(session.accessToken, orgLogin);
+    const org = await githubUserFetch<GitHubOrg>(session.accessToken, `/orgs/${encodeURIComponent(orgLogin)}`);
 
     await recordCorporateAgreement(
       params.db,
@@ -827,33 +823,6 @@ async function getClaDocument(
   }
 
   return claDocument;
-}
-
-async function assertCanSignForOrg(token: string, orgLogin: string): Promise<void> {
-  const membership = await githubFetch<GitHubOrgMembership>(
-    token,
-    `/user/memberships/orgs/${encodeURIComponent(orgLogin)}`
-  );
-
-  if (membership.state !== "active" || membership.role !== "admin") {
-    throw new Error("Corporate CLA signing requires active GitHub organization owner access");
-  }
-}
-
-async function githubFetch<T>(token: string, path: string): Promise<T> {
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${token}`,
-      "user-agent": "superagent-cla"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`GitHub API request failed for ${path} with ${response.status}`);
-  }
-
-  return response.json() as Promise<T>;
 }
 
 async function triggerPullRequestRecheck(params: {
