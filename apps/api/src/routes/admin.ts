@@ -40,6 +40,12 @@ import { createId } from "../utils/ids.js";
 import { sha256, sha256Bytes } from "../utils/sha.js";
 import { encryptSigningCredential } from "../signing/credentials.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
+import {
+  createRepositoryAdminPermissionCache,
+  hasRepositoryAdminPermission,
+  type GitHubInstallationAccount,
+  type RepositoryAdminPermissionCache
+} from "../github/user.js";
 
 type AdminRepositoryContext = {
   session: CurrentSession;
@@ -77,11 +83,23 @@ export async function registerAdminRoutes(
       params.db.query.repositories.findMany()
     ]);
 
-    const installableRepositories = await Promise.all(
-      allRepositories.map(async (repository) => {
-        const stats = await getRepositoryStats(params.db, repository.repositoryId);
-        return toAdminRepository(repository, true, stats);
-      })
+    const installationsById = new Map(
+      allInstallations.map((installation) => [installation.installationId, installation])
+    );
+
+    const accessibleRepositories = await filterAccessibleRepositories(
+      session,
+      allRepositories,
+      installationsById
+    );
+
+    const installableRepositories = (
+      await Promise.all(
+        accessibleRepositories.map(async (repository) => {
+          const stats = await getRepositoryStats(params.db, repository.repositoryId);
+          return toAdminRepository(repository, true, stats);
+        })
+      )
     );
 
     const repositoriesByInstallation = new Map<string, AdminRepository[]>();
@@ -111,7 +129,10 @@ export async function registerAdminRoutes(
       return;
     }
 
-    const templates = await listTemplatesForRepository(params.db, { repositoryId });
+    const templates = await listTemplatesForRepository(params.db, {
+      repositoryId,
+      githubUserId: context.session.user.githubUserId
+    });
     const settings = await getRepositoryTemplateSettings(params.db, repositoryId);
     const signingSettings = await getRepositorySigningSettings(params.db, repositoryId, params.config);
 
@@ -244,13 +265,37 @@ export async function registerAdminRoutes(
       return;
     }
 
-    const users = await params.db.query.githubUsers.findMany();
-    const personalSignaturesAll = await params.db.query.personalSignatures.findMany();
+    const accessibleRepositories = await listAccessibleRepositories(params.db, session);
+    const repositoryIds = accessibleRepositories.map((repository) => repository.repositoryId);
+    if (repositoryIds.length === 0) {
+      return { users: [] };
+    }
+
+    const documents = await params.db.query.claDocuments.findMany({
+      where: (table) => inArray(table.repositoryId, repositoryIds)
+    });
+    const documentIds = documents.map((document) => document.claDocumentId);
+    if (documentIds.length === 0) {
+      return { users: [] };
+    }
+
+    const personalSignatures = await params.db.query.personalSignatures.findMany({
+      where: (table) => inArray(table.claDocumentId, documentIds)
+    });
 
     const counts = new Map<string, number>();
-    for (const row of personalSignaturesAll) {
+    for (const row of personalSignatures) {
       counts.set(row.githubUserId, (counts.get(row.githubUserId) ?? 0) + 1);
     }
+
+    const githubUserIds = [...counts.keys()];
+    if (githubUserIds.length === 0) {
+      return { users: [] };
+    }
+
+    const users = await params.db.query.githubUsers.findMany({
+      where: (table) => inArray(table.githubUserId, githubUserIds)
+    });
 
     const summarized = users
       .map((user) => ({
@@ -420,7 +465,12 @@ export async function registerAdminRoutes(
     }
 
     if (body.templateVersionId) {
-      await assertTemplateVersionSelectable(params.db, repositoryId, body.templateVersionId);
+      await assertTemplateVersionSelectable(
+        params.db,
+        repositoryId,
+        body.templateVersionId,
+        context.session.user.githubUserId
+      );
     }
 
     await selectTemplateVersion({
@@ -544,13 +594,108 @@ async function requireAdminRepository(
     return null;
   }
 
+  const installation = await params.db.query.installations.findFirst({
+    where: (table) => eq(table.installationId, repository.installationId)
+  });
+
+  const adminPermission = await resolveRepositoryAdminPermission(
+    session,
+    repository,
+    installation
+  );
+  if (!adminPermission) {
+    reply.code(403).send({ error: "Repository admin permission required" });
+    return null;
+  }
+
   return { session, repository };
+}
+
+async function resolveRepositoryAdminPermission(
+  session: CurrentSession,
+  repository: typeof repositories.$inferSelect,
+  installation?: {
+    accountId: string;
+    accountLogin: string;
+    accountType: string;
+  } | null,
+  cache?: RepositoryAdminPermissionCache
+): Promise<boolean> {
+  return hasRepositoryAdminPermission({
+    accessToken: session.accessToken,
+    githubUserId: session.user.githubUserId,
+    owner: repository.owner,
+    name: repository.name,
+    installation: installation ? toInstallationAccount(installation) : null,
+    cache
+  });
+}
+
+function toInstallationAccount(installation: {
+  accountId: string;
+  accountLogin: string;
+  accountType: string;
+}): GitHubInstallationAccount {
+  return {
+    accountId: installation.accountId,
+    accountLogin: installation.accountLogin,
+    accountType: installation.accountType
+  };
+}
+
+async function listAccessibleRepositories(
+  db: DbClient,
+  session: CurrentSession
+): Promise<Array<typeof repositories.$inferSelect>> {
+  const [allInstallations, allRepositories] = await Promise.all([
+    db.query.installations.findMany(),
+    db.query.repositories.findMany()
+  ]);
+
+  const installationsById = new Map(
+    allInstallations.map((installation) => [installation.installationId, installation])
+  );
+
+  return filterAccessibleRepositories(session, allRepositories, installationsById);
+}
+
+async function filterAccessibleRepositories(
+  session: CurrentSession,
+  allRepositories: Array<typeof repositories.$inferSelect>,
+  installationsById: Map<
+    string,
+    {
+      accountId: string;
+      accountLogin: string;
+      accountType: string;
+    }
+  >
+): Promise<Array<typeof repositories.$inferSelect>> {
+  const permissionCache = createRepositoryAdminPermissionCache(session.accessToken);
+
+  const accessibleRepositories = await Promise.all(
+    allRepositories.map(async (repository) => {
+      const installation = installationsById.get(repository.installationId);
+      const adminPermission = await resolveRepositoryAdminPermission(
+        session,
+        repository,
+        installation,
+        permissionCache
+      );
+      return adminPermission ? repository : null;
+    })
+  );
+
+  return accessibleRepositories.filter(
+    (repository): repository is typeof repositories.$inferSelect => repository !== null
+  );
 }
 
 async function listTemplatesForRepository(
   db: DbClient,
   params: {
     repositoryId: string;
+    githubUserId: string;
   }
 ): Promise<TemplateSummary[]> {
   const defaultTemplates = await ensureDefaultTemplates(db);
@@ -560,7 +705,11 @@ async function listTemplatesForRepository(
     }),
     db.query.claTemplates.findMany({
       where: (table, { and, eq: equals, isNull }) =>
-        and(isNull(table.repositoryId), equals(table.source, "uploaded"))
+        and(
+          isNull(table.repositoryId),
+          equals(table.source, "uploaded"),
+          equals(table.createdByGithubUserId, params.githubUserId)
+        )
     })
   ]);
 
@@ -784,7 +933,8 @@ async function getDropboxSignIntegration(db: DbClient, repositoryId: string) {
 async function assertTemplateVersionSelectable(
   db: DbClient,
   repositoryId: string,
-  templateVersionId: string
+  templateVersionId: string,
+  githubUserId: string
 ): Promise<void> {
   const version = await db.query.claTemplateVersions.findFirst({
     where: (table) => eq(table.claTemplateVersionId, templateVersionId)
@@ -797,6 +947,14 @@ async function assertTemplateVersionSelectable(
     where: (table) => eq(table.claTemplateId, version.claTemplateId)
   });
   if (!template || (template.repositoryId && template.repositoryId !== repositoryId)) {
+    throw new Error("Template version is not available for this repository");
+  }
+
+  if (
+    template.source === "uploaded" &&
+    template.repositoryId === null &&
+    template.createdByGithubUserId !== githubUserId
+  ) {
     throw new Error("Template version is not available for this repository");
   }
 }
