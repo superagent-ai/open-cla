@@ -457,18 +457,19 @@ function DropboxSignCredentialsForm({
 
       <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm leading-6 text-muted-foreground">
         <li>
-          In Dropbox Sign, create an API app from the{" "}
-          <span className="font-medium text-foreground">API apps</span> section.
+          In Dropbox Sign, open <span className="font-medium text-foreground">Settings → API</span>{" "}
+          for your account.
         </li>
         <li>
-          Set that app&apos;s <span className="font-medium text-foreground">Event callback</span> to{" "}
+          Set the account <span className="font-medium text-foreground">Event callback URL</span> to{" "}
           <span className="break-all font-mono text-xs text-foreground">
             {callbackUrl}
           </span>
           .
         </li>
         <li>
-          Copy your account <span className="font-medium text-foreground">API key</span> and save it below.
+          Copy your account <span className="font-medium text-foreground">API key</span> and save it
+          below.
         </li>
         <li>
           In non-production deployments, OpenCLA sends Dropbox Sign requests in test mode automatically.
