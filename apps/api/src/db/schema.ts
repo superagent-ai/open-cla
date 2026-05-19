@@ -29,11 +29,16 @@ export const claDocumentSource = pgEnum("cla_document_source", [
   "managed_template"
 ]);
 
-export const claContentFormat = pgEnum("cla_content_format", ["markdown", "pdf"]);
+export const claContentFormat = pgEnum("cla_content_format", [
+  "markdown",
+  "pdf",
+  "dropbox_template"
+]);
 
 export const claTemplateSource = pgEnum("cla_template_source", [
   "default",
-  "uploaded"
+  "uploaded",
+  "dropbox_sign"
 ]);
 
 export const repositoryTemplateMode = pgEnum("repository_template_mode", [
@@ -142,6 +147,8 @@ export const claDocuments = pgTable(
     contentFormat: claContentFormat("content_format").notNull().default("markdown"),
     pdfUrl: text("pdf_url"),
     pdfData: bytea("pdf_data"),
+    dropboxTemplateId: text("dropbox_template_id"),
+    dropboxSignerRole: text("dropbox_signer_role"),
     ...timestamps
   },
   (table) => ({
@@ -189,6 +196,9 @@ export const claTemplateVersions = pgTable(
     pdfUrl: text("pdf_url"),
     pdfFileName: text("pdf_file_name"),
     pdfData: bytea("pdf_data"),
+    dropboxTemplateId: text("dropbox_template_id"),
+    dropboxSignerRole: text("dropbox_signer_role"),
+    dropboxTemplateSnapshot: jsonb("dropbox_template_snapshot").$type<Record<string, unknown>>(),
     versionHash: text("version_hash").notNull(),
     createdByGithubUserId: text("created_by_github_user_id").references(
       () => githubUsers.githubUserId,
@@ -222,6 +232,26 @@ export const repositoryTemplateSettings = pgTable("repository_template_settings"
   updatedByLogin: text("updated_by_login"),
   ...timestamps
 });
+
+export const userSigningProviderCredentials = pgTable(
+  "user_signing_provider_credentials",
+  {
+    credentialId: text("credential_id").primaryKey(),
+    githubUserId: text("github_user_id")
+      .notNull()
+      .references(() => githubUsers.githubUserId, { onDelete: "cascade" }),
+    provider: signatureProvider("provider").notNull(),
+    encryptedApiKey: text("encrypted_api_key").notNull(),
+    apiKeyLast4: text("api_key_last4"),
+    ...timestamps
+  },
+  (table) => ({
+    userProviderUnique: uniqueIndex("user_signing_provider_credentials_user_provider_unique").on(
+      table.githubUserId,
+      table.provider
+    )
+  })
+);
 
 export const signingProviderIntegrations = pgTable(
   "signing_provider_integrations",
@@ -424,6 +454,7 @@ export type ClaTemplateVersion = typeof claTemplateVersions.$inferSelect;
 export type RepositoryTemplateSettings = typeof repositoryTemplateSettings.$inferSelect;
 export type RepositorySigningSettings = typeof repositorySigningSettings.$inferSelect;
 export type SigningProviderIntegration = typeof signingProviderIntegrations.$inferSelect;
+export type UserSigningProviderCredential = typeof userSigningProviderCredentials.$inferSelect;
 export type CorporateAgreement = typeof corporateAgreements.$inferSelect;
 export type PersonalSignature = typeof personalSignatures.$inferSelect;
 export type SignatureRequest = typeof signatureRequests.$inferSelect;

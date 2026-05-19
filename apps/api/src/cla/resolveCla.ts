@@ -16,7 +16,7 @@ export type ResolvedCla = {
   document: ClaDocument;
   title: string;
   body: string;
-  contentFormat: "markdown" | "pdf";
+  contentFormat: "markdown" | "pdf" | "dropbox_template";
   pdfUrl: string | null;
   versionHash: string;
   source: "repository" | "default_template" | "managed_template";
@@ -43,6 +43,8 @@ export async function resolveClaForRepository(params: {
       body: managedTemplate.version.contentFormat === "pdf" ? "" : managedTemplate.version.body,
       contentFormat: managedTemplate.version.contentFormat,
       pdfData: managedTemplate.version.pdfData ?? null,
+      dropboxTemplateId: managedTemplate.version.dropboxTemplateId,
+      dropboxSignerRole: managedTemplate.version.dropboxSignerRole,
       versionHash: managedTemplate.version.versionHash,
       source: "managed_template",
       templateName: managedTemplate.template.name
@@ -157,9 +159,11 @@ async function persistResolvedCla(params: {
   repositoryId: string;
   title: string;
   body: string;
-  contentFormat: "markdown" | "pdf";
+  contentFormat: "markdown" | "pdf" | "dropbox_template";
   pdfData?: Buffer | null;
   pdfUrl?: string | null;
+  dropboxTemplateId?: string | null;
+  dropboxSignerRole?: string | null;
   versionHash?: string;
   source: "repository" | "default_template" | "managed_template";
   templateName?: string;
@@ -202,7 +206,9 @@ async function persistResolvedCla(params: {
       body: params.body,
       contentFormat: params.contentFormat,
       pdfUrl,
-      pdfData: params.pdfData ?? null
+      pdfData: params.pdfData ?? null,
+      dropboxTemplateId: params.dropboxTemplateId ?? null,
+      dropboxSignerRole: params.dropboxSignerRole ?? null
     })
     .returning();
 

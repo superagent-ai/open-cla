@@ -97,6 +97,8 @@ export function TemplateViewDashboard({
   const [isPending, startTransition] = useTransition();
   const versionHash = template.latestVersion?.versionHash.slice(0, 12) ?? null;
   const isPdf = contentFormat === "pdf" && pdfUrl;
+  const isDropbox = contentFormat === "dropbox_template";
+  const signerRoles = template.latestVersion?.dropboxTemplateSnapshot?.signerRoles ?? [];
 
   function runDelete(): void {
     setActionError(null);
@@ -154,8 +156,11 @@ export function TemplateViewDashboard({
         <div className="space-y-3 px-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{template.name}</h1>
-            <Badge variant="secondary">{template.source === "default" ? "Default" : "Custom"}</Badge>
+            <Badge variant="secondary">
+              {template.source === "default" ? "Default" : template.source === "dropbox_sign" ? "Dropbox Sign" : "Custom"}
+            </Badge>
             {isPdf ? <Badge variant="outline">PDF</Badge> : null}
+            {isDropbox ? <Badge variant="outline">Dropbox template</Badge> : null}
             {versionHash ? (
               <span className="text-xs text-muted-foreground">Version {versionHash}</span>
             ) : null}
@@ -165,7 +170,37 @@ export function TemplateViewDashboard({
           ) : null}
         </div>
 
-        {isPdf && pdfUrl ? (
+        {isDropbox ? (
+          <article className="rounded-2xl border bg-card p-6 md:p-8">
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold tracking-tight">Dropbox Sign template</h2>
+                <p className="max-w-2xl text-sm text-muted-foreground">
+                  The document, signature fields, and signer-entered fields are configured in Dropbox Sign. OpenCLA
+                  uses this template ID when sending contributors an email signing link.
+                </p>
+              </div>
+              <dl className="grid gap-4 text-sm md:grid-cols-2">
+                <div className="space-y-1">
+                  <dt className="font-medium text-foreground">Template ID</dt>
+                  <dd className="font-mono text-muted-foreground">
+                    {template.latestVersion?.dropboxTemplateId ?? "Unknown"}
+                  </dd>
+                </div>
+                <div className="space-y-1">
+                  <dt className="font-medium text-foreground">Contributor role</dt>
+                  <dd className="text-muted-foreground">{template.latestVersion?.dropboxSignerRole ?? "Unknown"}</dd>
+                </div>
+                {signerRoles.length > 0 ? (
+                  <div className="space-y-1 md:col-span-2">
+                    <dt className="font-medium text-foreground">Roles found at import</dt>
+                    <dd className="text-muted-foreground">{signerRoles.join(", ")}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
+          </article>
+        ) : isPdf && pdfUrl ? (
           <iframe
             className="h-[min(80vh,900px)] w-full"
             src={pdfUrl}

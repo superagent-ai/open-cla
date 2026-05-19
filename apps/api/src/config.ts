@@ -17,6 +17,8 @@ const envSchema = z.object({
   GITHUB_CLIENT_SECRET: z.string().min(1),
   GITHUB_OAUTH_CLIENT_ID: z.string().min(1).optional(),
   GITHUB_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  /** Comma-separated OAuth scopes for admin sign-in (default: read:org for org-owner repo listing). */
+  GITHUB_OAUTH_SCOPES: z.string().default("read:org"),
   SESSION_SECRET: z.string().min(32),
   COOKIE_DOMAIN: z.string().min(1).optional(),
   DEFAULT_CLA_TEMPLATE_NAME: z.string().default("standard-combined-v1"),
@@ -37,4 +39,11 @@ export function getConfig(): AppConfig {
 
 export function resetConfigForTests(): void {
   cachedConfig = undefined;
+}
+
+export function parseGithubOAuthScopes(scopes: string): string[] {
+  return scopes
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter((scope) => scope.length > 0);
 }

@@ -88,9 +88,13 @@ export function SigningPage({
   dropboxEmailSentKind,
   error
 }: SigningPageProps) {
-  const [signingKind, setSigningKind] = useState<SigningKind | null>(signedKind ?? null);
+  const isDropboxTemplate = signing.cla.contentFormat === "dropbox_template";
+  const [signingKind, setSigningKind] = useState<SigningKind | null>(
+    signedKind ?? (isDropboxTemplate ? "personal" : null)
+  );
   const requiresDropboxSign = signing.signingMode === "dropbox_sign";
   const signingDisabled = requiresDropboxSign && !signing.dropboxSignConfigured;
+  const pullNumber = signing.context.pull?.trim() || null;
 
   return (
     <>
@@ -106,8 +110,31 @@ export function SigningPage({
                   {signing.cla.title}
                 </h1>
                 <p className="max-w-2xl text-base text-muted-foreground">
-                  Review and sign the Contributor License Agreement for{" "}
-                  <span className="font-medium text-foreground">{signing.repository.fullName}</span>.
+                  {isDropboxTemplate ? (
+                    <>
+                      Complete the Contributor License Agreement for{" "}
+                      <span className="font-medium text-foreground">{signing.repository.fullName}</span>
+                      {pullNumber ? (
+                        <>
+                          {" "}
+                          to unblock{" "}
+                          <a
+                            className="font-medium text-foreground underline underline-offset-4"
+                            href={`https://github.com/${signing.repository.fullName}/pull/${pullNumber}`}
+                          >
+                            pull request #{pullNumber}
+                          </a>
+                        </>
+                      ) : (
+                        "."
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      Review and sign the Contributor License Agreement for{" "}
+                      <span className="font-medium text-foreground">{signing.repository.fullName}</span>.
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -156,14 +183,19 @@ export function SigningPage({
             <StatusMessage tone="error" title="Unable to record signature" message={error} />
           ) : null}
 
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
-            {signing.cla.contentFormat === "pdf" && signing.cla.pdfUrl ? (
+          <div
+            className={cn(
+              "grid gap-6",
+              isDropboxTemplate ? "mx-auto max-w-2xl" : "lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start"
+            )}
+          >
+            {!isDropboxTemplate && signing.cla.contentFormat === "pdf" && signing.cla.pdfUrl ? (
               <iframe
                 className="h-[min(75vh,900px)] w-full"
                 src={signing.cla.pdfUrl}
                 title={signing.cla.title}
               />
-            ) : (
+            ) : !isDropboxTemplate ? (
               <Card className="gap-0 py-0">
                 <CardContent className="px-6 py-6 md:px-8">
                   {signing.cla.body.trim() ? (
@@ -177,11 +209,11 @@ export function SigningPage({
                   )}
                 </CardContent>
               </Card>
-            )}
+            ) : null}
 
             <Card
               className={cn(
-                "lg:sticky lg:top-8",
+                !isDropboxTemplate && "lg:sticky lg:top-8",
                 requiresDropboxSign &&
                   "border-teal-200/60 shadow-md shadow-teal-600/5 dark:border-teal-800/40 dark:shadow-teal-950/20"
               )}
@@ -190,14 +222,14 @@ export function SigningPage({
                 {requiresDropboxSign ? (
                   <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-teal-200/80 bg-teal-500/10 px-2.5 py-1 text-xs font-medium text-teal-900 dark:border-teal-700/60 dark:bg-teal-500/15 dark:text-teal-100">
                     <PenLine className="size-3.5 shrink-0" aria-hidden />
-                    Dropbox Sign required
+                    Dropbox Sign
                   </span>
                 ) : null}
                 <div className="space-y-1.5">
                   <CardTitle>Sign agreement</CardTitle>
                   <p className="text-sm leading-relaxed text-muted-foreground">
                     {requiresDropboxSign
-                      ? "Dropbox Sign will email you a signing link after you continue. Complete the signature from that email."
+                      ? "Dropbox Sign will email you a signing link after you continue."
                       : "Choose how you are signing before continuing."}
                   </p>
                 </div>
@@ -211,6 +243,9 @@ export function SigningPage({
                   />
                 ) : null}
 
+                {isDropboxTemplate ? (
+                  <p className="text-sm font-medium text-foreground">How are you signing?</p>
+                ) : null}
                 <div
                   className={cn(
                     "grid gap-2.5",
@@ -288,7 +323,7 @@ export function SigningPage({
                     </form>
                   ) : null}
 
-                  {!signingKind ? (
+                  {!signingKind && !isDropboxTemplate ? (
                     <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-center text-sm text-muted-foreground">
                       Select a signing type above to continue.
                     </p>

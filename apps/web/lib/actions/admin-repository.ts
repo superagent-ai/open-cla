@@ -29,7 +29,15 @@ export async function updateTemplateSelectionAction(
     return { error: "Template settings were not returned by the API" };
   }
 
-  return { error: null, patch: { settings } };
+  const signingSettings = readSigningSettings(response.body);
+
+  return {
+    error: null,
+    patch: {
+      settings,
+      ...(signingSettings ? { signingSettings } : {})
+    }
+  };
 }
 
 export async function updateSigningModeAction(

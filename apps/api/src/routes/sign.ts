@@ -28,6 +28,7 @@ import { handlePullRequestWebhook } from "../webhooks/pullRequest.js";
 import { createId } from "../utils/ids.js";
 import {
   createDropboxSigningRequest,
+  createDropboxSigningRequestFromTemplate,
   getDropboxEventSignatureRequestId,
   verifyDropboxEventCallback
 } from "../signing/dropboxSign.js";
@@ -425,7 +426,8 @@ function toSigningPageResponse(
           ? signClaPdfPath(state.cla.document.claDocumentId, state.context)
           : state.cla.pdfUrl,
       versionHash: state.cla.versionHash,
-      source: state.cla.source
+      source: state.cla.source,
+      dropboxSignerRole: state.cla.document.dropboxSignerRole
     },
     signingMode: state.signingMode,
     dropboxSignConfigured: state.dropboxSignConfigured,
@@ -514,25 +516,44 @@ async function createDropboxSignatureRequestResponse(params: {
     throw new Error("Dropbox Sign requires a valid signer email address");
   }
 
-  const result = await createDropboxSigningRequest({
-    config: params.config,
-    credentials: {
-      apiKey: decryptSigningCredential(params.config, params.integration.encryptedApiKey)
-    },
-    title: params.claTitle?.trim() || "Contributor License Agreement",
-    body: params.claDocument.body,
-    contentFormat: params.claDocument.contentFormat,
-    pdfData: params.claDocument.pdfData,
-    pdfUrl: params.claDocument.pdfUrl,
-    versionHash: params.claDocument.versionHash,
-    signerName: params.session.user.login,
-    signerEmail,
-    repositoryFullName: params.repository.fullName,
-    kind: params.kind,
-    context: params.context,
-    orgLogin: params.org?.login,
-    signingRedirectUrl: buildDropboxSigningRedirectUrl(params.config, params.context, params.kind)
-  });
+  const credentials = {
+    apiKey: decryptSigningCredential(params.config, params.integration.encryptedApiKey)
+  };
+  const signingRedirectUrl = buildDropboxSigningRedirectUrl(
+    params.config,
+    params.context,
+    params.kind
+  );
+  const result =
+    params.claDocument.contentFormat === "dropbox_template"
+      ? await createDropboxSigningRequestFromTemplate({
+          config: params.config,
+          credentials,
+          templateId: requireDropboxTemplateId(params.claDocument.dropboxTemplateId),
+          signerRole: requireDropboxSignerRole(params.claDocument.dropboxSignerRole),
+          signerName: params.session.user.login,
+          signerEmail,
+          repositoryFullName: params.repository.fullName,
+          kind: params.kind,
+          signingRedirectUrl
+        })
+      : await createDropboxSigningRequest({
+          config: params.config,
+          credentials,
+          title: params.claTitle?.trim() || "Contributor License Agreement",
+          body: params.claDocument.body,
+          contentFormat: params.claDocument.contentFormat,
+          pdfData: params.claDocument.pdfData,
+          pdfUrl: params.claDocument.pdfUrl,
+          versionHash: params.claDocument.versionHash,
+          signerName: params.session.user.login,
+          signerEmail,
+          repositoryFullName: params.repository.fullName,
+          kind: params.kind,
+          context: params.context,
+          orgLogin: params.org?.login,
+          signingRedirectUrl
+        });
 
   await params.db.insert(signatureRequests).values({
     signatureRequestId: createId("sigreq"),
@@ -777,6 +798,20 @@ function normalizeEmail(value: string | undefined): string | null {
     return null;
   }
   return trimmed;
+}
+
+function requireDropboxTemplateId(value: string | null): string {
+  if (!value) {
+    throw new Error("Dropbox Sign template is missing a template id");
+  }
+  return value;
+}
+
+function requireDropboxSignerRole(value: string | null): string {
+  if (!value) {
+    throw new Error("Dropbox Sign template is missing a signer role");
+  }
+  return value;
 }
 
 function signingProviderErrorMessage(error: unknown): string {

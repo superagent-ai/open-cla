@@ -39,7 +39,7 @@ Create a **GitHub OAuth App** (separate from the GitHub App) for contributor/adm
 - **Homepage URL:** your admin web origin (for example `http://localhost:3001` locally)
 - **Authorization callback URL:** `https://<your-api-host>/auth/github/callback`
 
-The OAuth App requests **no scopes**; authorization is enforced per repository using GitHub permission checks on admin APIs.
+The OAuth App requests **`read:org`** by default (`GITHUB_OAUTH_SCOPES`) so org owners can list private organization repositories in the admin UI. Set `GITHUB_OAUTH_SCOPES=` to request no scopes. After changing scopes, sign out and sign in again so GitHub re-authorizes.
 
 ## Database
 

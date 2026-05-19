@@ -12,7 +12,6 @@ import { DocsSearch } from "@/components/docs-search";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SearchCommand } from "@/components/search-command";
 import { SiteFooter } from "@/components/site-footer";
-import { logoutAction } from "@/lib/actions/auth";
 import { githubLoginUrl } from "@/lib/api-public";
 import type { ChangelogSearchItem } from "@/lib/changelog";
 import type { DocSearchItem } from "@/lib/docs";
@@ -235,7 +234,7 @@ export function DashboardShell({
                   Documentation
                 </Link>
                 <div className="h-px bg-border" />
-                <form action={logoutAction}>
+                <form action={`${apiBaseUrl}/auth/logout`} method="post">
                   <button
                     className="flex w-full items-center px-4 py-3 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                     type="submit"

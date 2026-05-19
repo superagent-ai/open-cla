@@ -33,6 +33,42 @@ describe("resolveClaForRepository", () => {
     expect(result.body).toBe("# Managed CLA");
   });
 
+  it("resolves a managed Dropbox Sign template without reading CLA.md", async () => {
+    const result = await resolveClaForRepository({
+      db: fakeDb({
+        settings: {
+          mode: "managed",
+          claTemplateVersionId: "ver_dropbox"
+        },
+        template: {
+          claTemplateId: "tmpl_dropbox",
+          repositoryId: "100",
+          name: "Dropbox CLA",
+          source: "dropbox_sign"
+        },
+        version: {
+          claTemplateVersionId: "ver_dropbox",
+          claTemplateId: "tmpl_dropbox",
+          title: "Dropbox CLA",
+          body: "",
+          contentFormat: "dropbox_template",
+          dropboxTemplateId: "dbx_template",
+          dropboxSignerRole: "Signer",
+          versionHash: "dropbox-hash"
+        }
+      }),
+      octokit: fakeOctokitThatShouldNotBeCalled(),
+      owner: "owner",
+      repo: "repo",
+      repositoryId: "100",
+      defaultTemplateName: "standard-combined-v1"
+    });
+
+    expect(result.contentFormat).toBe("dropbox_template");
+    expect(result.document.dropboxTemplateId).toBe("dbx_template");
+    expect(result.document.dropboxSignerRole).toBe("Signer");
+  });
+
   it("uses a repository CLA.md when present", async () => {
     const body = "# Custom CLA";
     const result = await resolveClaForRepository({
@@ -83,6 +119,9 @@ function fakeDb(options: {
                 updatedAt: new Date(),
                 versionHash: "managed-hash",
                 createdByLogin: null,
+                contentFormat: "markdown",
+                dropboxTemplateId: null,
+                dropboxSignerRole: null,
                 ...options.version
               }
             : null

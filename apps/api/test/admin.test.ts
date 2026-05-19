@@ -33,6 +33,7 @@ const config: AppConfig = {
 describe("admin routes", () => {
   afterEach(() => {
     vi.mocked(hasRepositoryAdminPermission).mockReset();
+    vi.unstubAllGlobals();
   });
 
   it("requires authentication for installations", async () => {
@@ -203,6 +204,63 @@ describe("admin routes", () => {
     }
   });
 
+  it("requires Dropbox credentials before selecting a Dropbox template", async () => {
+    vi.mocked(hasRepositoryAdminPermission).mockResolvedValue(true);
+
+    const app = await testApp(fakeDbWithDropboxTemplateSelection());
+
+    try {
+      const response = await app.inject({
+        method: "PUT",
+        url: "/api/admin/repositories/repo_1/template-selection",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${app.signCookie("sess_1")}`,
+          "content-type": "application/json"
+        },
+        payload: {
+          templateVersionId: "tmplver_dropbox"
+        }
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({
+        error: "Import a Dropbox Sign template with your API key before selecting this template"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("auto-enables Dropbox signing when selecting a Dropbox template with credentials", async () => {
+    vi.mocked(hasRepositoryAdminPermission).mockResolvedValue(true);
+
+    const db = fakeDbWithDropboxTemplateSelection({
+      signingProviderIntegrationId: "signint_1",
+      repositoryId: "repo_1",
+      provider: "dropbox_sign"
+    });
+    const app = await testApp(db);
+
+    try {
+      const response = await app.inject({
+        method: "PUT",
+        url: "/api/admin/repositories/repo_1/template-selection",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${app.signCookie("sess_1")}`,
+          "content-type": "application/json"
+        },
+        payload: {
+          templateVersionId: "tmplver_dropbox"
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().signingSettings.signingMode).toBe("dropbox_sign");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("returns only signers from repositories the user can administer", async () => {
     vi.mocked(hasRepositoryAdminPermission).mockResolvedValue(true);
 
@@ -228,6 +286,43 @@ describe("admin routes", () => {
           }
         ]
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("imports a Dropbox Sign template by id", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          template: {
+            template_id: "tmpl_dropbox",
+            title: "Dropbox CLA",
+            signer_roles: [{ name: "Signer" }]
+          }
+        })
+      )
+    );
+    const app = await testApp();
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/admin/templates/dropbox",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${app.signCookie("sess_1")}`,
+          "content-type": "application/json"
+        },
+        payload: {
+          name: "Dropbox CLA",
+          dropboxTemplateId: "tmpl_dropbox",
+          dropboxApiKey: "dropbox-key"
+        }
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toMatchObject({ ok: true, templateId: expect.any(String) });
     } finally {
       await app.close();
     }
@@ -306,6 +401,53 @@ function fakeDbWithForeignTemplateSelection() {
   return db;
 }
 
+function fakeDbWithDropboxTemplateSelection(integration: Record<string, unknown> | null = null) {
+  const db = fakeDb();
+
+  db.query.claTemplateVersions.findFirst = async () => ({
+    claTemplateVersionId: "tmplver_dropbox",
+    claTemplateId: "tmpl_dropbox",
+    title: "Dropbox CLA",
+    body: "",
+    versionHash: "dropbox-hash",
+    contentFormat: "dropbox_template",
+    pdfUrl: null,
+    pdfFileName: null,
+    dropboxTemplateId: "tmpl_dropbox",
+    dropboxSignerRole: "Signer",
+    dropboxTemplateSnapshot: null,
+    createdByGithubUserId: "100",
+    createdByLogin: "alice",
+    createdAt: new Date(),
+    updatedAt: new Date()
+  });
+
+  db.query.claTemplates.findFirst = async () => ({
+    claTemplateId: "tmpl_dropbox",
+    repositoryId: null,
+    source: "dropbox_sign",
+    name: "Dropbox CLA",
+    description: null,
+    createdByGithubUserId: "100",
+    createdByLogin: "alice",
+    createdAt: new Date(),
+    updatedAt: new Date()
+  });
+  db.query.signingProviderIntegrations.findFirst = async () => integration;
+  db.query.repositorySigningSettings.findFirst = async () =>
+    integration
+      ? {
+          repositoryId: "repo_1",
+          signingMode: "dropbox_sign",
+          signingProviderIntegrationId: "signint_1",
+          updatedByLogin: "alice",
+          updatedAt: new Date()
+        }
+      : null;
+
+  return db;
+}
+
 function fakeDbWithScopedUsers() {
   const db = fakeDb();
 
@@ -338,6 +480,7 @@ function fakeDb() {
   return {
     insert: () => ({
       values: (payload: Record<string, unknown>) => ({
+        onConflictDoUpdate: () => undefined,
         returning: async () => {
           if ("name" in payload) {
             templateCounter += 1;
@@ -365,6 +508,9 @@ function fakeDb() {
               contentFormat: "markdown",
               pdfUrl: null,
               pdfFileName: null,
+              dropboxTemplateId: null,
+              dropboxSignerRole: null,
+              dropboxTemplateSnapshot: null,
               createdByGithubUserId: null,
               createdByLogin: null,
               createdAt: new Date(),
@@ -469,6 +615,9 @@ function fakeDb() {
         findMany: async () => []
       },
       signingProviderIntegrations: {
+        findFirst: async () => null
+      },
+      userSigningProviderCredentials: {
         findFirst: async () => null
       }
     }

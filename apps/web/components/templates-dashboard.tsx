@@ -2,7 +2,7 @@
 
 import type { AdminUser, GlobalTemplateSummary } from "@superagent-cla/shared";
 import { ditherAvatarDataUri } from "dither-avatar";
-import { FileText, Plus } from "lucide-react";
+import { FileText, PenLine, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 
@@ -109,6 +109,7 @@ export function TemplatesDashboard({ apiBaseUrl, user, templates }: TemplatesDas
 
 function TemplateCard({ template }: { template: GlobalTemplateSummary }) {
   const isDefault = template.source === "default";
+  const isDropbox = template.source === "dropbox_sign";
   const seed = `${template.templateId}-${template.name}`;
   const subtitle = template.latestVersion
     ? `${template.latestVersion.versionHash.slice(0, 12)}${
@@ -127,7 +128,8 @@ function TemplateCard({ template }: { template: GlobalTemplateSummary }) {
         }}
       >
         <span className="absolute left-3 top-3 z-10 inline-flex items-center gap-1 rounded-full bg-background/95 px-2.5 py-1 text-xs font-medium text-foreground shadow-sm ring-1 ring-foreground/5">
-          {isDefault ? "Default" : "Custom"}
+          {isDropbox ? <PenLine className="h-3 w-3" /> : null}
+          {isDefault ? "Default" : isDropbox ? "Dropbox Sign" : "Custom"}
         </span>
       </div>
       <div className="flex items-start gap-3 px-1">
