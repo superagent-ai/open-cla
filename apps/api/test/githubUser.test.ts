@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasRepositoryAdminPermission, isActiveOrgOwner } from "../src/github/user.js";
+import {
+  createRepositoryAdminPermissionCache,
+  hasRepositoryAdminPermission,
+  isActiveOrgOwner
+} from "../src/github/user.js";
 
 describe("github user permissions", () => {
   afterEach(() => {
@@ -102,5 +106,42 @@ describe("github user permissions", () => {
     const result = await isActiveOrgOwner("token", "acme");
 
     expect(result).toBe(false);
+  });
+
+  it("reuses cached org ownership checks within a request", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ state: "active", role: "admin" }), { status: 200 })
+    );
+    const cache = createRepositoryAdminPermissionCache("token");
+    const installation = {
+      accountId: "1",
+      accountLogin: "acme",
+      accountType: "Organization"
+    };
+
+    await Promise.all([
+      hasRepositoryAdminPermission({
+        accessToken: "token",
+        githubUserId: "99",
+        owner: "acme",
+        name: "widget",
+        installation,
+        cache
+      }),
+      hasRepositoryAdminPermission({
+        accessToken: "token",
+        githubUserId: "99",
+        owner: "acme",
+        name: "other",
+        installation,
+        cache
+      })
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/user/memberships/orgs/acme",
+      expect.any(Object)
+    );
   });
 });

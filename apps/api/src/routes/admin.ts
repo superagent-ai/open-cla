@@ -41,8 +41,10 @@ import { sha256, sha256Bytes } from "../utils/sha.js";
 import { encryptSigningCredential } from "../signing/credentials.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
 import {
+  createRepositoryAdminPermissionCache,
   hasRepositoryAdminPermission,
-  type GitHubInstallationAccount
+  type GitHubInstallationAccount,
+  type RepositoryAdminPermissionCache
 } from "../github/user.js";
 
 type AdminRepositoryContext = {
@@ -616,14 +618,16 @@ async function resolveRepositoryAdminPermission(
     accountId: string;
     accountLogin: string;
     accountType: string;
-  } | null
+  } | null,
+  cache?: RepositoryAdminPermissionCache
 ): Promise<boolean> {
   return hasRepositoryAdminPermission({
     accessToken: session.accessToken,
     githubUserId: session.user.githubUserId,
     owner: repository.owner,
     name: repository.name,
-    installation: installation ? toInstallationAccount(installation) : null
+    installation: installation ? toInstallationAccount(installation) : null,
+    cache
   });
 }
 
@@ -667,13 +671,16 @@ async function filterAccessibleRepositories(
     }
   >
 ): Promise<Array<typeof repositories.$inferSelect>> {
+  const permissionCache = createRepositoryAdminPermissionCache(session.accessToken);
+
   const accessibleRepositories = await Promise.all(
     allRepositories.map(async (repository) => {
       const installation = installationsById.get(repository.installationId);
       const adminPermission = await resolveRepositoryAdminPermission(
         session,
         repository,
-        installation
+        installation,
+        permissionCache
       );
       return adminPermission ? repository : null;
     })

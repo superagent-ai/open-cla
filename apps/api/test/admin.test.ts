@@ -5,9 +5,13 @@ import type { AppConfig } from "../src/config.js";
 import { registerAdminRoutes } from "../src/routes/admin.js";
 import { SESSION_COOKIE } from "../src/routes/session.js";
 
-vi.mock("../src/github/user.js", () => ({
-  hasRepositoryAdminPermission: vi.fn()
-}));
+vi.mock("../src/github/user.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/github/user.js")>();
+  return {
+    ...actual,
+    hasRepositoryAdminPermission: vi.fn()
+  };
+});
 
 import { hasRepositoryAdminPermission } from "../src/github/user.js";
 
