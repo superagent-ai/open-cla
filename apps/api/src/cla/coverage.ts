@@ -10,9 +10,10 @@ import {
 export type Contributor = {
   githubUserId: string | null;
   login: string;
+  isBot?: boolean;
 };
 
-export type CoverageReason = "personal" | "corporate";
+export type CoverageReason = "personal" | "corporate" | "bot";
 
 export type CoveredContributor = Contributor & {
   reason: CoverageReason;
@@ -47,6 +48,7 @@ export async function getCoverageStatus(params: {
   membershipVerifier?: MembershipVerifier;
 }): Promise<CoverageStatus> {
   const contributorIds = params.contributors
+    .filter((contributor) => !contributor.isBot)
     .map((contributor) => contributor.githubUserId)
     .filter((id): id is string => Boolean(id));
 
@@ -91,6 +93,11 @@ export async function evaluateCoverage(params: {
   const missingContributors: MissingContributor[] = [];
 
   for (const contributor of dedupeContributors(params.contributors)) {
+    if (contributor.isBot) {
+      coveredContributors.push({ ...contributor, reason: "bot" });
+      continue;
+    }
+
     if (!contributor.githubUserId) {
       missingContributors.push({
         ...contributor,
