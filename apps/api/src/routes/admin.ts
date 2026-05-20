@@ -39,7 +39,10 @@ import { adminTemplatePdfPath } from "../cla/pdfPaths.js";
 import { decodePdfBase64 } from "../signing/validatePdf.js";
 import { createId } from "../utils/ids.js";
 import { sha256, sha256Bytes } from "../utils/sha.js";
-import { encryptSigningCredential } from "../signing/credentials.js";
+import {
+  decryptSigningCredential,
+  encryptSigningCredential
+} from "../signing/credentials.js";
 import { getDropboxTemplate } from "../signing/dropboxSign.js";
 import {
   getUserDropboxSignCredentialLast4,
@@ -1195,20 +1198,33 @@ async function ensureDropboxSignIntegration(
   session: CurrentSession
 ) {
   const existing = await getDropboxSignIntegration(params.db, repositoryId);
-  if (existing) {
+  const accountApiKey = await resolveDropboxApiKey(
+    params.db,
+    params.config,
+    session.user.githubUserId
+  );
+
+  if (!accountApiKey) {
     return existing;
   }
 
-  const apiKey = await resolveDropboxApiKey(params.db, params.config, session.user.githubUserId);
-  if (!apiKey) {
-    return null;
+  if (existing) {
+    try {
+      if (
+        decryptSigningCredential(params.config, existing.encryptedApiKey) === accountApiKey
+      ) {
+        return existing;
+      }
+    } catch {
+      // Refresh when the stored integration key cannot be decrypted.
+    }
   }
 
   await saveDropboxSignIntegration({
     db: params.db,
     config: params.config,
     repositoryId,
-    apiKey,
+    apiKey: accountApiKey,
     session
   });
   return getDropboxSignIntegration(params.db, repositoryId);

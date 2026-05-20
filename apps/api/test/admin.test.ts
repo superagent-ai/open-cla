@@ -2,6 +2,10 @@ import cookie from "@fastify/cookie";
 import fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/config.js";
+import {
+  decryptSigningCredential,
+  encryptSigningCredential
+} from "../src/signing/credentials.js";
 import { registerAdminRoutes } from "../src/routes/admin.js";
 import { SESSION_COOKIE } from "../src/routes/session.js";
 
@@ -227,6 +231,69 @@ describe("admin routes", () => {
       expect(response.json()).toEqual({
         error: "Import a Dropbox Sign template with your API key before selecting this template"
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("refreshes stale repository Dropbox API key from account credentials", async () => {
+    vi.mocked(hasRepositoryAdminPermission).mockResolvedValue(true);
+
+    const oldEncrypted = encryptSigningCredential(config, "old-dropbox-key");
+    const newEncrypted = encryptSigningCredential(config, "new-dropbox-key");
+    let integrationUpdate: { encryptedApiKey: string; apiKeyLast4: string } | null = null;
+
+    const db = fakeDbWithDropboxTemplateSelection({
+      signingProviderIntegrationId: "signint_1",
+      repositoryId: "repo_1",
+      provider: "dropbox_sign",
+      encryptedApiKey: oldEncrypted,
+      apiKeyLast4: "-key"
+    });
+    db.query.userSigningProviderCredentials.findFirst = async () => ({
+      encryptedApiKey: newEncrypted,
+      apiKeyLast4: "-key"
+    });
+
+    const baseInsert = db.insert.bind(db);
+    db.insert = () => ({
+      values: (payload: Record<string, unknown>) => {
+        const chain = baseInsert().values(payload);
+        return {
+          onConflictDoUpdate: (args: { set: Record<string, unknown> }) => {
+            if (typeof args.set.encryptedApiKey === "string") {
+              integrationUpdate = {
+                encryptedApiKey: args.set.encryptedApiKey,
+                apiKeyLast4: args.set.apiKeyLast4 as string
+              };
+            }
+            return chain.onConflictDoUpdate();
+          },
+          returning: chain.returning
+        };
+      }
+    });
+
+    const app = await testApp(db);
+
+    try {
+      const response = await app.inject({
+        method: "PUT",
+        url: "/api/admin/repositories/repo_1/template-selection",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${app.signCookie("sess_1")}`,
+          "content-type": "application/json"
+        },
+        payload: {
+          templateVersionId: "tmplver_dropbox"
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(integrationUpdate).not.toBeNull();
+      expect(
+        decryptSigningCredential(config, integrationUpdate!.encryptedApiKey)
+      ).toBe("new-dropbox-key");
     } finally {
       await app.close();
     }
