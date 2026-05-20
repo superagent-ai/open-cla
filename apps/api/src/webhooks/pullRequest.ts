@@ -219,12 +219,13 @@ async function collectContributors(params: {
   const contributors: Contributor[] = [
     {
       githubUserId: params.pullRequestUser ? String(params.pullRequestUser.id) : null,
-      login: params.pullRequestUser?.login ?? "unknown"
+      login: params.pullRequestUser?.login ?? "unknown",
+      isBot: isBotGithubUser(params.pullRequestUser)
     }
   ];
 
   const commitsResponse = await params.octokit.request<
-    Array<{ author: { id: number; login: string } | null }>
+    Array<{ author: { id: number; login: string; type?: string } | null }>
   >("GET /repos/{owner}/{repo}/pulls/{pull_number}/commits", {
     owner: params.owner,
     repo: params.repo,
@@ -236,12 +237,17 @@ async function collectContributors(params: {
     if (commit.author) {
       contributors.push({
         githubUserId: String(commit.author.id),
-        login: commit.author.login
+        login: commit.author.login,
+        isBot: isBotGithubUser(commit.author)
       });
     }
   }
 
   return contributors;
+}
+
+function isBotGithubUser(user: { login?: string; type?: string } | null | undefined): boolean {
+  return user?.type === "Bot" || user?.login?.endsWith("[bot]") === true;
 }
 
 async function verifyOrgMembership(params: {

@@ -51,4 +51,23 @@ describe("evaluateCoverage", () => {
       expect.objectContaining({ login: "bob" })
     ]);
   });
+
+  it("does not require bot contributors to sign a CLA", async () => {
+    const result = await evaluateCoverage({
+      contributors: [
+        alice,
+        { githubUserId: "3", login: "dependabot[bot]", isBot: true }
+      ],
+      personallySignedUserIds: new Set(["1"]),
+      corporateAgreements: [],
+      membershipVerifier: async () => false
+    });
+
+    expect(result.covered).toBe(true);
+    expect(result.coveredContributors).toEqual([
+      expect.objectContaining({ login: "alice", reason: "personal" }),
+      expect.objectContaining({ login: "dependabot[bot]", reason: "bot" })
+    ]);
+    expect(result.missingContributors).toEqual([]);
+  });
 });
