@@ -95,56 +95,91 @@ export function SigningPage({
   const requiresDropboxSign = signing.signingMode === "dropbox_sign";
   const signingDisabled = requiresDropboxSign && !signing.dropboxSignConfigured;
   const pullNumber = signing.context.pull?.trim() || null;
+  const dropboxColumnClass = "mx-auto w-full max-w-lg";
+
+  const signedInBadge = (
+    <div className="shrink-0 whitespace-nowrap rounded-full bg-secondary px-4 py-2 text-sm text-secondary-foreground">
+      Signed in as <span className="font-medium">@{signing.user.login}</span>
+    </div>
+  );
+
+  const titleAndSubtitle = (
+    <div className={cn("space-y-3", isDropboxTemplate && "w-full")}>
+      <h1
+        className={cn(
+          "font-semibold tracking-tight",
+          isDropboxTemplate ? "text-2xl md:text-3xl" : "max-w-3xl text-3xl md:text-4xl"
+        )}
+      >
+        {signing.cla.title}
+      </h1>
+      <p className={cn("w-full text-base text-muted-foreground", !isDropboxTemplate && "max-w-2xl")}>
+        {isDropboxTemplate ? (
+          <>
+            Complete the Contributor License Agreement for{" "}
+            <span className="font-medium text-foreground">{signing.repository.fullName}</span>
+            {pullNumber ? (
+              <>
+                {" "}
+                to unblock{" "}
+                <a
+                  className="font-medium text-foreground underline underline-offset-4"
+                  href={`https://github.com/${signing.repository.fullName}/pull/${pullNumber}`}
+                >
+                  pull request #{pullNumber}
+                </a>
+              </>
+            ) : (
+              "."
+            )}
+          </>
+        ) : (
+          <>
+            Review and sign the Contributor License Agreement for{" "}
+            <span className="font-medium text-foreground">{signing.repository.fullName}</span>.
+          </>
+        )}
+      </p>
+    </div>
+  );
 
   return (
     <>
       <main className="min-h-screen bg-background text-foreground">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-6 py-10 md:py-16">
-          <header className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-5">
-              <a href="/" className="inline-flex items-center">
-                <img src="/images/logo.webp" alt="OpenCLA" className="h-10 w-auto object-contain" />
-              </a>
-              <div className="space-y-3">
-                <h1 className="max-w-3xl text-3xl font-semibold tracking-tight md:text-4xl">
-                  {signing.cla.title}
-                </h1>
-                <p className="max-w-2xl text-base text-muted-foreground">
-                  {isDropboxTemplate ? (
-                    <>
-                      Complete the Contributor License Agreement for{" "}
-                      <span className="font-medium text-foreground">{signing.repository.fullName}</span>
-                      {pullNumber ? (
-                        <>
-                          {" "}
-                          to unblock{" "}
-                          <a
-                            className="font-medium text-foreground underline underline-offset-4"
-                            href={`https://github.com/${signing.repository.fullName}/pull/${pullNumber}`}
-                          >
-                            pull request #{pullNumber}
-                          </a>
-                        </>
-                      ) : (
-                        "."
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      Review and sign the Contributor License Agreement for{" "}
-                      <span className="font-medium text-foreground">{signing.repository.fullName}</span>.
-                    </>
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="rounded-full bg-secondary px-4 py-2 text-sm text-secondary-foreground">
-              Signed in as <span className="font-medium">@{signing.user.login}</span>
-            </div>
+          <header
+            className={cn(
+              isDropboxTemplate
+                ? cn(dropboxColumnClass, "flex flex-col gap-5")
+                : "flex flex-col gap-6 md:flex-row md:items-start md:justify-between"
+            )}
+          >
+            {isDropboxTemplate ? (
+              <>
+                <div className="flex items-center justify-between gap-4">
+                  <a href="/" className="inline-flex items-center">
+                    <img src="/images/logo.webp" alt="OpenCLA" className="h-10 w-auto object-contain" />
+                  </a>
+                  {signedInBadge}
+                </div>
+                {titleAndSubtitle}
+              </>
+            ) : (
+              <>
+                <div className="min-w-0 space-y-5">
+                  <a href="/" className="inline-flex items-center">
+                    <img src="/images/logo.webp" alt="OpenCLA" className="h-10 w-auto object-contain" />
+                  </a>
+                  {titleAndSubtitle}
+                </div>
+                {signedInBadge}
+              </>
+            )}
           </header>
 
           {signedKind ? (
             <StatusMessage
+              className={isDropboxTemplate ? dropboxColumnClass : undefined}
               tone="success"
               title="CLA signature recorded"
               message={
@@ -157,6 +192,7 @@ export function SigningPage({
 
           {dropboxEmailSentKind ? (
             <StatusMessage
+              className={isDropboxTemplate ? dropboxColumnClass : undefined}
               tone="success"
               title="Check your email"
               message={
@@ -169,6 +205,7 @@ export function SigningPage({
 
           {dropboxSignedKind ? (
             <StatusMessage
+              className={isDropboxTemplate ? dropboxColumnClass : undefined}
               tone="success"
               title="Signature submitted"
               message={
@@ -180,13 +217,18 @@ export function SigningPage({
           ) : null}
 
           {error ? (
-            <StatusMessage tone="error" title="Unable to record signature" message={error} />
+            <StatusMessage
+              className={isDropboxTemplate ? dropboxColumnClass : undefined}
+              tone="error"
+              title="Unable to record signature"
+              message={error}
+            />
           ) : null}
 
           <div
             className={cn(
               "grid gap-6",
-              isDropboxTemplate ? "mx-auto max-w-2xl" : "lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start"
+              isDropboxTemplate ? dropboxColumnClass : "lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start"
             )}
           >
             {!isDropboxTemplate && signing.cla.contentFormat === "pdf" && signing.cla.pdfUrl ? (
@@ -427,10 +469,12 @@ function SignerEmailField() {
 }
 
 function StatusMessage({
+  className,
   tone,
   title,
   message
 }: {
+  className?: string;
   tone: "success" | "error";
   title: string;
   message: string;
@@ -439,6 +483,7 @@ function StatusMessage({
     <div
       className={cn(
         "rounded-xl border px-4 py-3 text-sm",
+        className,
         tone === "success"
           ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
           : "border-destructive/30 bg-destructive/10 text-destructive"
