@@ -15,6 +15,7 @@ const testConfig: AppConfig = {
   GITHUB_CLIENT_ID: "client",
   GITHUB_CLIENT_SECRET: "secret",
   SESSION_SECRET: "01234567890123456789012345678901",
+  GITHUB_OAUTH_SCOPES: "read:org",
   DEFAULT_CLA_TEMPLATE_NAME: "standard-combined-v1"
 };
 
