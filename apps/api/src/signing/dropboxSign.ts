@@ -36,8 +36,26 @@ export type DropboxSigningRequestInput = {
   signingRedirectUrl?: string;
 };
 
+export type DropboxTemplateSigningRequestInput = {
+  config: AppConfig;
+  credentials: DropboxCredentials;
+  templateId: string;
+  signerRole: string;
+  signerName: string;
+  signerEmail: string;
+  repositoryFullName: string;
+  kind: "personal" | "corporate";
+  signingRedirectUrl?: string;
+};
+
 export type DropboxCredentials = {
   apiKey: string;
+};
+
+export type DropboxTemplateMetadata = {
+  templateId: string;
+  title: string | null;
+  signerRoles: string[];
 };
 
 export type DropboxSigningRequestResult = {
@@ -57,6 +75,16 @@ type DropboxSignatureRequestResponse = {
     signature_request_id?: string;
     signatures?: Array<{
       signature_id?: string;
+    }>;
+  };
+};
+
+type DropboxTemplateResponse = {
+  template?: {
+    template_id?: string;
+    title?: string;
+    signer_roles?: Array<{
+      name?: string;
     }>;
   };
 };
@@ -118,6 +146,81 @@ export async function createDropboxSigningRequest(
   const createResponse = await dropboxFetch<DropboxSignatureRequestResponse>(
     input.credentials,
     "/signature_request/send",
+    {
+      method: "POST",
+      body: form
+    }
+  );
+  const providerRequestId = createResponse.signature_request?.signature_request_id;
+  const providerSignatureId = createResponse.signature_request?.signatures?.[0]?.signature_id;
+  if (!providerRequestId || !providerSignatureId) {
+    throw new Error("Dropbox Sign did not return a signature request id");
+  }
+
+  return {
+    providerRequestId,
+    providerSignatureId
+  };
+}
+
+export async function getDropboxTemplate(
+  credentials: DropboxCredentials,
+  templateId: string
+): Promise<DropboxTemplateMetadata> {
+  const response = await dropboxFetch<DropboxTemplateResponse>(
+    credentials,
+    `/template/${encodeURIComponent(templateId)}`,
+    {
+      method: "GET"
+    }
+  );
+  const template = response.template;
+  if (!template) {
+    throw new Error("Dropbox Sign did not return a template");
+  }
+
+  return {
+    templateId: template.template_id ?? templateId,
+    title: template.title ?? null,
+    signerRoles: [
+      ...new Set(
+        (template.signer_roles ?? [])
+          .map((role) => role.name?.trim())
+          .filter((role): role is string => Boolean(role))
+      )
+    ]
+  };
+}
+
+export async function createDropboxSigningRequestFromTemplate(
+  input: DropboxTemplateSigningRequestInput
+): Promise<DropboxSigningRequestResult> {
+  const form = new FormData();
+  form.set("template_ids[]", input.templateId);
+  form.set("title", `Sign CLA for ${input.repositoryFullName}`);
+  form.set("subject", `Sign CLA for ${input.repositoryFullName}`);
+  form.set(
+    "message",
+    `Please review and sign the ${input.kind} Contributor License Agreement for ${input.repositoryFullName}.`
+  );
+  form.set("test_mode", dropboxUsesTestMode(input.config) ? "1" : "0");
+  if (input.signingRedirectUrl) {
+    form.set("signing_redirect_url", input.signingRedirectUrl);
+  }
+  form.set(
+    "signers",
+    JSON.stringify([
+      {
+        role: input.signerRole,
+        name: input.signerName,
+        email_address: input.signerEmail
+      }
+    ])
+  );
+
+  const createResponse = await dropboxFetch<DropboxSignatureRequestResponse>(
+    input.credentials,
+    "/signature_request/send_with_template",
     {
       method: "POST",
       body: form

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { OAuthApp } from "@octokit/oauth-app";
 import type { FastifyInstance } from "fastify";
-import type { AppConfig } from "../config.js";
+import { parseGithubOAuthScopes, type AppConfig } from "../config.js";
 import type { DbClient } from "../db/client.js";
 import { createUserSession, clearSession } from "./session.js";
 
@@ -31,7 +31,7 @@ export async function registerAuthRoutes(
     const { url } = params.oauthApp.getWebFlowAuthorizationUrl({
       state,
       redirectUrl,
-      scopes: []
+      scopes: parseGithubOAuthScopes(params.config.GITHUB_OAUTH_SCOPES)
     });
 
     if (cookieDomain) {
@@ -117,7 +117,7 @@ export async function registerAuthRoutes(
 
   app.post("/auth/logout", async (_request, reply) => {
     clearSession(reply, params.config.COOKIE_DOMAIN);
-    return reply.redirect("/");
+    return reply.redirect(params.config.ADMIN_WEB_URL);
   });
 }
 

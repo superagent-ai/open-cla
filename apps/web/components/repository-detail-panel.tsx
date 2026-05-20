@@ -8,7 +8,7 @@ import type {
   TemplateSummary,
   TemplatesResponse
 } from "@superagent-cla/shared";
-import { Check, ChevronsUpDown, ExternalLink, Loader } from "lucide-react";
+import { Check, ChevronsUpDown, ExternalLink, Loader, PenLine } from "lucide-react";
 import Link from "next/link";
 import {
   useActionState,
@@ -241,24 +241,26 @@ export function RepositoryDetailPanel({
             description={
               signingSettings.dropboxSignConfigured
                 ? "Contributors sign the CLA using Dropbox Sign."
-                : "Contributors will sign using Dropbox Sign after credentials are added."
+                : signingSettings.accountDropboxSignApiKeyLast4
+                  ? "Uses your saved Dropbox Sign API key from template import."
+                  : "Import a Dropbox template with your API key, or add credentials below."
             }
             disabled={pending}
             label="Dropbox Sign"
             onClick={() => {
               setDraftSigningMode("dropbox_sign");
               setShowDropboxCredentials(true);
-              if (signingSettings.dropboxSignConfigured) {
-                runRepositoryMutation(() => updateSigningModeAction(repositoryId, "dropbox_sign"));
-              }
+              runRepositoryMutation(() => updateSigningModeAction(repositoryId, "dropbox_sign"));
             }}
           />
         </div>
         {showDropboxCredentials || signingSettings.signingMode === "dropbox_sign" ? (
           <DropboxSignCredentialsForm
+            accountApiKeyLast4={signingSettings.accountDropboxSignApiKeyLast4}
             action={dropboxFormAction}
             apiKeyLast4={signingSettings.dropboxSignApiKeyLast4}
             callbackUrl={signingSettings.dropboxSignCallbackUrl}
+            dropboxSignConfigured={signingSettings.dropboxSignConfigured}
             pending={pending}
           />
         ) : null}
@@ -431,28 +433,38 @@ function SigningModeButton({
 }
 
 function DropboxSignCredentialsForm({
+  accountApiKeyLast4,
   action,
   apiKeyLast4,
   callbackUrl,
+  dropboxSignConfigured,
   pending
 }: {
+  accountApiKeyLast4: string | null;
   action: (formData: FormData) => void;
   apiKeyLast4: string | null;
   callbackUrl: string;
+  dropboxSignConfigured: boolean;
   pending: boolean;
 }) {
+  const showApiKeyInput = !accountApiKeyLast4;
+
   return (
     <form action={action} className="max-w-3xl rounded-xl border bg-card p-4 ring-1 ring-foreground/5">
       <div className="space-y-1">
-        <h3 className="text-sm font-medium text-foreground">Dropbox Sign credentials</h3>
-        <p className="text-sm text-muted-foreground">
-          Store the repository owner&apos;s Dropbox Sign API key. The key is encrypted at rest.
-        </p>
-        {apiKeyLast4 ? (
-          <p className="text-xs text-muted-foreground">
-            Current API key: <span className="font-mono text-foreground">****{apiKeyLast4}</span>
+        <h3 className="text-sm font-medium text-foreground">Dropbox Sign setup</h3>
+        {accountApiKeyLast4 ? (
+          <p className="text-sm text-muted-foreground">
+            Using your saved Dropbox Sign API key{" "}
+            <span className="font-mono text-foreground">****{accountApiKeyLast4}</span>
+            {dropboxSignConfigured ? " for this repository." : "."}
           </p>
-        ) : null}
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Import a Dropbox template with your API key, or enter it below. The key is encrypted at
+            rest and reused for every repository you configure.
+          </p>
+        )}
       </div>
 
       <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm leading-6 text-muted-foreground">
@@ -467,32 +479,38 @@ function DropboxSignCredentialsForm({
           </span>
           .
         </li>
-        <li>
-          Copy your account <span className="font-medium text-foreground">API key</span> and save it
-          below.
-        </li>
+        {showApiKeyInput ? (
+          <li>
+            Copy your account <span className="font-medium text-foreground">API key</span> and save it
+            below.
+          </li>
+        ) : null}
         <li>
           In non-production deployments, OpenCLA sends Dropbox Sign requests in test mode automatically.
         </li>
       </ol>
 
-      <label className="mt-4 block space-y-1 text-sm">
-        <span className="font-medium text-foreground">API key</span>
-        <input
-          autoComplete="off"
-          className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          name="apiKey"
-          placeholder={apiKeyLast4 ? `****${apiKeyLast4}` : "Dropbox Sign API key"}
-          required={!apiKeyLast4}
-          type="password"
-        />
-      </label>
+      {showApiKeyInput ? (
+        <label className="mt-4 block space-y-1 text-sm">
+          <span className="font-medium text-foreground">API key</span>
+          <input
+            autoComplete="off"
+            className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            name="apiKey"
+            placeholder="Dropbox Sign API key"
+            required
+            type="password"
+          />
+        </label>
+      ) : null}
 
-      <div className="mt-4 flex justify-end">
-        <SubmitButton disabled={pending} pendingLabel="Saving…" size="sm">
-          Save credentials
-        </SubmitButton>
-      </div>
+      {showApiKeyInput || !dropboxSignConfigured ? (
+        <div className="mt-4 flex justify-end">
+          <SubmitButton disabled={pending} pendingLabel="Saving…" size="sm">
+            {showApiKeyInput ? "Save API key" : "Connect repository"}
+          </SubmitButton>
+        </div>
+      ) : null}
     </form>
   );
 }
@@ -657,11 +675,11 @@ function ClaPolicySearchableSelect({
                         data-checked={isVersionPolicyActive(versionId)}
                         onSelect={(v) => applyActionKey(parseClaPolicyCmdValue(v))}
                         value={claPolicyCmdValue(
-                          `${template.name} workspace global upload ${template.description ?? ""}`,
+                          `${template.name} workspace global ${template.source === "dropbox_sign" ? "dropbox sign" : "upload"} ${template.description ?? ""}`,
                           `v:${versionId}`
                         )}
                       >
-                        <span className="min-w-0">{template.name}</span>
+                        <TemplatePolicyLabel template={template} />
                       </CommandItem>
                     );
                   })}
@@ -688,11 +706,11 @@ function ClaPolicySearchableSelect({
                         data-checked={isVersionPolicyActive(versionId)}
                         onSelect={(v) => applyActionKey(parseClaPolicyCmdValue(v))}
                         value={claPolicyCmdValue(
-                          `${template.name} this repository scoped upload ${template.description ?? ""}`,
+                          `${template.name} this repository scoped ${template.source === "dropbox_sign" ? "dropbox sign" : "upload"} ${template.description ?? ""}`,
                           `v:${versionId}`
                         )}
                       >
-                        <span className="min-w-0">{template.name}</span>
+                        <TemplatePolicyLabel template={template} />
                       </CommandItem>
                     );
                   })}
@@ -716,6 +734,20 @@ function splitTemplates(templates: TemplateSummary[], repositoryId: string) {
   const repoCustomTemplates = customRest.filter((template) => template.repositoryId === repositoryId);
 
   return { defaultTemplates, globalCustomTemplates, repoCustomTemplates };
+}
+
+function TemplatePolicyLabel({ template }: { template: TemplateSummary }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="min-w-0 truncate">{template.name}</span>
+      {template.source === "dropbox_sign" ? (
+        <Badge variant="outline" className="shrink-0 gap-1">
+          <PenLine className="size-3" />
+          Dropbox Sign
+        </Badge>
+      ) : null}
+    </span>
+  );
 }
 
 function groupSignatures(signatures: SignatureRecord[]): {

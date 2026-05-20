@@ -89,7 +89,7 @@ Open-source CLA platform: GitHub App PR checks, PDF templates, and e-sign for co
    https://your-ngrok-url.ngrok-free.app/auth/github/callback
    ```
 
-   The OAuth App requests no scopes. The backend uses OAuth only for identity, then verifies admin rights per selected installed repository.
+   The OAuth App requests `read:org` by default (`GITHUB_OAUTH_SCOPES`) so org owners can see private org repos in the admin UI. The backend still verifies admin rights per repository.
 
 7. Set GitHub and session environment values.
 

@@ -1,6 +1,7 @@
 import {
   CreateGlobalTemplateRequestSchema,
   CreateTemplateRequestSchema,
+  ImportDropboxTemplateRequestSchema,
   SaveDropboxSignIntegrationRequestSchema,
   SelectSigningModeRequestSchema,
   SelectTemplateRequestSchema,
@@ -38,7 +39,16 @@ import { adminTemplatePdfPath } from "../cla/pdfPaths.js";
 import { decodePdfBase64 } from "../signing/validatePdf.js";
 import { createId } from "../utils/ids.js";
 import { sha256, sha256Bytes } from "../utils/sha.js";
-import { encryptSigningCredential } from "../signing/credentials.js";
+import {
+  decryptSigningCredential,
+  encryptSigningCredential
+} from "../signing/credentials.js";
+import { getDropboxTemplate } from "../signing/dropboxSign.js";
+import {
+  getUserDropboxSignCredentialLast4,
+  resolveDropboxApiKey,
+  saveUserDropboxSignCredential
+} from "../signing/userCredentials.js";
 import { getCurrentSession, type CurrentSession } from "./session.js";
 import {
   createRepositoryAdminPermissionCache,
@@ -134,7 +144,12 @@ export async function registerAdminRoutes(
       githubUserId: context.session.user.githubUserId
     });
     const settings = await getRepositoryTemplateSettings(params.db, repositoryId);
-    const signingSettings = await getRepositorySigningSettings(params.db, repositoryId, params.config);
+    const signingSettings = await getRepositorySigningSettings(
+      params.db,
+      repositoryId,
+      params.config,
+      context.session.user.githubUserId
+    );
 
     return {
       repository: toAdminRepository(context.repository, true),
@@ -225,7 +240,7 @@ export async function registerAdminRoutes(
           or(
             eq(table.source, "default"),
             and(
-              eq(table.source, "uploaded"),
+              or(eq(table.source, "uploaded"), eq(table.source, "dropbox_sign")),
               eq(table.createdByGithubUserId, session.user.githubUserId)
             )
           )
@@ -324,9 +339,10 @@ export async function registerAdminRoutes(
     }
 
     const isVisibleDefault = template.source === "default";
-    const isOwnedUpload =
-      template.source === "uploaded" && template.createdByGithubUserId === session.user.githubUserId;
-    if (!isVisibleDefault && !isOwnedUpload) {
+    const isOwnedCustom =
+      (template.source === "uploaded" || template.source === "dropbox_sign") &&
+      template.createdByGithubUserId === session.user.githubUserId;
+    if (!isVisibleDefault && !isOwnedCustom) {
       return reply.code(403).send({ error: "Template not accessible" });
     }
 
@@ -337,7 +353,7 @@ export async function registerAdminRoutes(
         ...summary,
         createdByLogin: template.createdByLogin,
         createdAt: template.createdAt.toISOString(),
-        isMine: isOwnedUpload
+        isMine: isOwnedCustom
       },
       contentFormat: latestVersion?.contentFormat ?? "markdown",
       body: latestVersion?.body ?? "",
@@ -364,9 +380,10 @@ export async function registerAdminRoutes(
     }
 
     const isVisibleDefault = template.source === "default";
-    const isOwnedUpload =
-      template.source === "uploaded" && template.createdByGithubUserId === session.user.githubUserId;
-    if (!isVisibleDefault && !isOwnedUpload) {
+    const isOwnedCustom =
+      (template.source === "uploaded" || template.source === "dropbox_sign") &&
+      template.createdByGithubUserId === session.user.githubUserId;
+    if (!isVisibleDefault && !isOwnedCustom) {
       return reply.code(403).send({ error: "Template not accessible" });
     }
 
@@ -404,7 +421,10 @@ export async function registerAdminRoutes(
     if (!template || template.repositoryId !== null) {
       return reply.code(404).send({ error: "Template not found" });
     }
-    if (template.source !== "uploaded" || template.createdByGithubUserId !== session.user.githubUserId) {
+    if (
+      (template.source !== "uploaded" && template.source !== "dropbox_sign") ||
+      template.createdByGithubUserId !== session.user.githubUserId
+    ) {
       return reply.code(403).send({ error: "Template not deletable" });
     }
 
@@ -453,6 +473,87 @@ export async function registerAdminRoutes(
     return reply.code(201).send({ ok: true, templateId });
   });
 
+  app.post("/api/admin/templates/dropbox", async (request, reply) => {
+    const session = await requireSession(params.db, request, reply);
+    if (!session) {
+      return;
+    }
+
+    const body = ImportDropboxTemplateRequestSchema.parse(request.body);
+    const dropboxApiKey = await resolveDropboxApiKey(
+      params.db,
+      params.config,
+      session.user.githubUserId,
+      body.dropboxApiKey
+    );
+    if (!dropboxApiKey) {
+      return reply.code(400).send({ error: "Dropbox Sign API key is required" });
+    }
+
+    if (body.dropboxApiKey) {
+      await saveUserDropboxSignCredential(
+        params.db,
+        params.config,
+        session.user.githubUserId,
+        body.dropboxApiKey
+      );
+    }
+
+    let templateMetadata: Awaited<ReturnType<typeof getDropboxTemplate>>;
+    try {
+      templateMetadata = await getDropboxTemplate(
+        { apiKey: dropboxApiKey },
+        body.dropboxTemplateId
+      );
+    } catch (error) {
+      return reply.code(502).send({ error: signingProviderErrorMessage(error) });
+    }
+
+    const signerRole = resolveDropboxSignerRole(templateMetadata.signerRoles, body.signerRole);
+    if (!signerRole) {
+      return reply.code(400).send({
+        error:
+          templateMetadata.signerRoles.length > 1
+            ? "Choose the Dropbox signer role contributors should use for this template"
+            : "Dropbox template does not define a signer role"
+      });
+    }
+
+    const templateId = createId("tmpl");
+    const templateVersionId = createId("tmplver");
+    const title = body.title || templateMetadata.title || body.name;
+    const versionHash = sha256(`${templateMetadata.templateId}:${signerRole}`);
+
+    await params.db.insert(claTemplates).values({
+      claTemplateId: templateId,
+      repositoryId: null,
+      source: "dropbox_sign",
+      name: body.name,
+      description: body.description ?? null,
+      createdByGithubUserId: session.user.githubUserId,
+      createdByLogin: session.user.login
+    });
+
+    await params.db.insert(claTemplateVersions).values({
+      claTemplateVersionId: templateVersionId,
+      claTemplateId: templateId,
+      title,
+      body: "",
+      contentFormat: "dropbox_template",
+      dropboxTemplateId: templateMetadata.templateId,
+      dropboxSignerRole: signerRole,
+      dropboxTemplateSnapshot: {
+        title: templateMetadata.title,
+        signerRoles: templateMetadata.signerRoles
+      },
+      versionHash,
+      createdByGithubUserId: session.user.githubUserId,
+      createdByLogin: session.user.login
+    });
+
+    return reply.code(201).send({ ok: true, templateId });
+  });
+
   app.put("/api/admin/repositories/:repositoryId/template-selection", async (request, reply) => {
     const { repositoryId } = request.params as { repositoryId: string };
     const body = SelectTemplateRequestSchema.parse({
@@ -464,13 +565,22 @@ export async function registerAdminRoutes(
       return;
     }
 
+    let selectedVersion: ClaTemplateVersion | null = null;
     if (body.templateVersionId) {
-      await assertTemplateVersionSelectable(
+      selectedVersion = await assertTemplateVersionSelectable(
         params.db,
         repositoryId,
         body.templateVersionId,
         context.session.user.githubUserId
       );
+      if (selectedVersion.contentFormat === "dropbox_template") {
+        const integration = await ensureDropboxSignIntegration(params, repositoryId, context.session);
+        if (!integration) {
+          return reply.code(400).send({
+            error: "Import a Dropbox Sign template with your API key before selecting this template"
+          });
+        }
+      }
     }
 
     await selectTemplateVersion({
@@ -480,8 +590,23 @@ export async function registerAdminRoutes(
       session: context.session
     });
 
+    if (selectedVersion?.contentFormat === "dropbox_template") {
+      await selectSigningMode({
+        db: params.db,
+        repositoryId,
+        signingMode: "dropbox_sign",
+        session: context.session
+      });
+    }
+
     return {
-      settings: await getRepositoryTemplateSettings(params.db, repositoryId)
+      settings: await getRepositoryTemplateSettings(params.db, repositoryId),
+      signingSettings: await getRepositorySigningSettings(
+        params.db,
+        repositoryId,
+        params.config,
+        context.session.user.githubUserId
+      )
     };
   });
 
@@ -497,9 +622,12 @@ export async function registerAdminRoutes(
     }
 
     if (body.signingMode === "dropbox_sign") {
-      const integration = await getDropboxSignIntegration(params.db, repositoryId);
+      const integration = await ensureDropboxSignIntegration(params, repositoryId, context.session);
       if (!integration) {
-        return reply.code(400).send({ error: "Add Dropbox Sign credentials before enabling this mode" });
+        return reply.code(400).send({
+          error:
+            "Import a Dropbox Sign template with your API key first, or save Dropbox Sign credentials for this repository"
+        });
       }
     }
 
@@ -511,7 +639,12 @@ export async function registerAdminRoutes(
     });
 
     return {
-      signingSettings: await getRepositorySigningSettings(params.db, repositoryId, params.config)
+      signingSettings: await getRepositorySigningSettings(
+        params.db,
+        repositoryId,
+        params.config,
+        context.session.user.githubUserId
+      )
     };
   });
 
@@ -526,16 +659,27 @@ export async function registerAdminRoutes(
       return;
     }
 
-    await saveDropboxSignIntegration({
-      db: params.db,
-      config: params.config,
-      repositoryId,
-      apiKey: body.apiKey,
-      session: context.session
-    });
+    try {
+      await saveDropboxSignIntegration({
+        db: params.db,
+        config: params.config,
+        repositoryId,
+        apiKey: body.apiKey,
+        session: context.session
+      });
+    } catch (error) {
+      return reply.code(400).send({
+        error: error instanceof Error ? error.message : "Failed to save Dropbox Sign credentials"
+      });
+    }
 
     return {
-      signingSettings: await getRepositorySigningSettings(params.db, repositoryId, params.config)
+      signingSettings: await getRepositorySigningSettings(
+        params.db,
+        repositoryId,
+        params.config,
+        context.session.user.githubUserId
+      )
     };
   });
 
@@ -704,10 +848,10 @@ async function listTemplatesForRepository(
       where: (table) => eq(table.repositoryId, params.repositoryId)
     }),
     db.query.claTemplates.findMany({
-      where: (table, { and, eq: equals, isNull }) =>
+      where: (table, { and, eq: equals, isNull, or }) =>
         and(
           isNull(table.repositoryId),
-          equals(table.source, "uploaded"),
+          or(equals(table.source, "uploaded"), equals(table.source, "dropbox_sign")),
           equals(table.createdByGithubUserId, params.githubUserId)
         )
     })
@@ -857,9 +1001,25 @@ function toTemplateVersion(version: ClaTemplateVersion): TemplateVersion {
     body: version.body,
     pdfUrl: version.pdfUrl,
     pdfFileName: version.pdfFileName,
+    dropboxTemplateId: version.dropboxTemplateId,
+    dropboxSignerRole: version.dropboxSignerRole,
+    dropboxTemplateSnapshot: normalizeDropboxTemplateSnapshot(version.dropboxTemplateSnapshot),
     createdByLogin: version.createdByLogin,
     createdAt: version.createdAt.toISOString()
   };
+}
+
+function normalizeDropboxTemplateSnapshot(
+  value: Record<string, unknown> | null | undefined
+): TemplateVersion["dropboxTemplateSnapshot"] {
+  if (!value) {
+    return null;
+  }
+  const title = typeof value.title === "string" ? value.title : null;
+  const signerRoles = Array.isArray(value.signerRoles)
+    ? value.signerRoles.filter((role): role is string => typeof role === "string" && role.length > 0)
+    : [];
+  return { title, signerRoles };
 }
 
 async function getRepositoryTemplateSettings(
@@ -904,13 +1064,15 @@ async function getRepositoryTemplateSettings(
 async function getRepositorySigningSettings(
   db: DbClient,
   repositoryId: string,
-  config: AppConfig
+  config: AppConfig,
+  githubUserId: string
 ): Promise<RepositorySigningSettings> {
-  const [settings, integration] = await Promise.all([
+  const [settings, integration, accountDropboxSignApiKeyLast4] = await Promise.all([
     db.query.repositorySigningSettings.findFirst({
       where: (table) => eq(table.repositoryId, repositoryId)
     }),
-    getDropboxSignIntegration(db, repositoryId)
+    getDropboxSignIntegration(db, repositoryId),
+    getUserDropboxSignCredentialLast4(db, githubUserId)
   ]);
 
   return {
@@ -918,6 +1080,7 @@ async function getRepositorySigningSettings(
     signingMode: settings?.signingMode ?? "simple",
     dropboxSignConfigured: Boolean(integration),
     dropboxSignApiKeyLast4: integration?.apiKeyLast4 ?? null,
+    accountDropboxSignApiKeyLast4,
     dropboxSignCallbackUrl: new URL("/api/sign/dropbox/webhook", config.PUBLIC_APP_URL).toString(),
     updatedByLogin: settings?.updatedByLogin ?? integration?.updatedByLogin ?? null,
     updatedAt: (settings?.updatedAt ?? integration?.updatedAt)?.toISOString() ?? null
@@ -930,12 +1093,22 @@ async function getDropboxSignIntegration(db: DbClient, repositoryId: string) {
   });
 }
 
+function resolveDropboxSignerRole(
+  availableRoles: string[],
+  requestedRole: string | undefined
+): string | null {
+  if (requestedRole) {
+    return availableRoles.includes(requestedRole) ? requestedRole : null;
+  }
+  return availableRoles.length === 1 ? (availableRoles[0] ?? null) : null;
+}
+
 async function assertTemplateVersionSelectable(
   db: DbClient,
   repositoryId: string,
   templateVersionId: string,
   githubUserId: string
-): Promise<void> {
+): Promise<ClaTemplateVersion> {
   const version = await db.query.claTemplateVersions.findFirst({
     where: (table) => eq(table.claTemplateVersionId, templateVersionId)
   });
@@ -951,12 +1124,14 @@ async function assertTemplateVersionSelectable(
   }
 
   if (
-    template.source === "uploaded" &&
+    (template.source === "uploaded" || template.source === "dropbox_sign") &&
     template.repositoryId === null &&
     template.createdByGithubUserId !== githubUserId
   ) {
     throw new Error("Template version is not available for this repository");
   }
+
+  return version;
 }
 
 async function selectTemplateVersion(params: {
@@ -1017,6 +1192,44 @@ async function selectSigningMode(params: {
     });
 }
 
+async function ensureDropboxSignIntegration(
+  params: { db: DbClient; config: AppConfig },
+  repositoryId: string,
+  session: CurrentSession
+) {
+  const existing = await getDropboxSignIntegration(params.db, repositoryId);
+  const accountApiKey = await resolveDropboxApiKey(
+    params.db,
+    params.config,
+    session.user.githubUserId
+  );
+
+  if (!accountApiKey) {
+    return existing;
+  }
+
+  if (existing) {
+    try {
+      if (
+        decryptSigningCredential(params.config, existing.encryptedApiKey) === accountApiKey
+      ) {
+        return existing;
+      }
+    } catch {
+      // Refresh when the stored integration key cannot be decrypted.
+    }
+  }
+
+  await saveDropboxSignIntegration({
+    db: params.db,
+    config: params.config,
+    repositoryId,
+    apiKey: accountApiKey,
+    session
+  });
+  return getDropboxSignIntegration(params.db, repositoryId);
+}
+
 async function saveDropboxSignIntegration(params: {
   db: DbClient;
   config: AppConfig;
@@ -1025,15 +1238,33 @@ async function saveDropboxSignIntegration(params: {
   session: CurrentSession;
 }): Promise<void> {
   const existing = await getDropboxSignIntegration(params.db, params.repositoryId);
-  if (!params.apiKey && !existing) {
-    throw new Error("Dropbox Sign API key is required");
+  const resolvedApiKey = await resolveDropboxApiKey(
+    params.db,
+    params.config,
+    params.session.user.githubUserId,
+    params.apiKey
+  );
+
+  if (!resolvedApiKey && !existing) {
+    throw new Error(
+      "Dropbox Sign API key is required. Import a Dropbox template with your API key first."
+    );
+  }
+
+  if (params.apiKey) {
+    await saveUserDropboxSignCredential(
+      params.db,
+      params.config,
+      params.session.user.githubUserId,
+      params.apiKey
+    );
   }
 
   const integrationId = createId("signint");
-  const encryptedApiKey = params.apiKey
-    ? encryptSigningCredential(params.config, params.apiKey)
+  const encryptedApiKey = resolvedApiKey
+    ? encryptSigningCredential(params.config, resolvedApiKey)
     : existing!.encryptedApiKey;
-  const apiKeyLast4 = params.apiKey ? keySuffix(params.apiKey) : existing!.apiKeyLast4;
+  const apiKeyLast4 = resolvedApiKey ? keySuffix(resolvedApiKey) : existing!.apiKeyLast4;
 
   await params.db
     .insert(signingProviderIntegrations)
@@ -1161,6 +1392,10 @@ function signatureDocumentContext(
     documentSource: "managed_template",
     documentLabel: document.templateName ?? "Managed template"
   };
+}
+
+function signingProviderErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Signing provider request failed";
 }
 
 function toAdminRepository(

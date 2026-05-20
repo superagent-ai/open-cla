@@ -42,11 +42,17 @@ export const AdminInstallationSchema = z.object({
 });
 export type AdminInstallation = z.infer<typeof AdminInstallationSchema>;
 
-export const TemplateSourceSchema = z.enum(["default", "uploaded"]);
+export const TemplateSourceSchema = z.enum(["default", "uploaded", "dropbox_sign"]);
 export type TemplateSource = z.infer<typeof TemplateSourceSchema>;
 
-export const ClaContentFormatSchema = z.enum(["markdown", "pdf"]);
+export const ClaContentFormatSchema = z.enum(["markdown", "pdf", "dropbox_template"]);
 export type ClaContentFormat = z.infer<typeof ClaContentFormatSchema>;
+
+export const DropboxTemplateSnapshotSchema = z.object({
+  title: z.string().nullable(),
+  signerRoles: z.array(z.string())
+});
+export type DropboxTemplateSnapshot = z.infer<typeof DropboxTemplateSnapshotSchema>;
 
 export const TemplateVersionSchema = z.object({
   templateVersionId: z.string(),
@@ -57,6 +63,9 @@ export const TemplateVersionSchema = z.object({
   body: z.string(),
   pdfUrl: z.string().nullable(),
   pdfFileName: z.string().nullable(),
+  dropboxTemplateId: z.string().nullable(),
+  dropboxSignerRole: z.string().nullable(),
+  dropboxTemplateSnapshot: DropboxTemplateSnapshotSchema.nullable(),
   createdByLogin: z.string().nullable(),
   createdAt: z.string()
 });
@@ -91,6 +100,7 @@ export const RepositorySigningSettingsSchema = z.object({
   signingMode: RepositorySigningModeSchema,
   dropboxSignConfigured: z.boolean(),
   dropboxSignApiKeyLast4: z.string().nullable(),
+  accountDropboxSignApiKeyLast4: z.string().nullable(),
   dropboxSignCallbackUrl: z.string(),
   updatedByLogin: z.string().nullable(),
   updatedAt: z.string().nullable()
@@ -138,6 +148,16 @@ export const CreateGlobalTemplateRequestSchema = z.object({
   ...pdfUploadFields
 });
 export type CreateGlobalTemplateRequest = z.infer<typeof CreateGlobalTemplateRequestSchema>;
+
+export const ImportDropboxTemplateRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional(),
+  title: z.string().trim().min(1).max(200).optional(),
+  dropboxTemplateId: z.string().trim().min(1).max(255),
+  dropboxApiKey: z.string().trim().min(1).optional(),
+  signerRole: z.string().trim().min(1).max(120).optional()
+});
+export type ImportDropboxTemplateRequest = z.infer<typeof ImportDropboxTemplateRequestSchema>;
 
 export const TemplateDetailResponseSchema = z.object({
   template: GlobalTemplateSummarySchema,
@@ -204,7 +224,8 @@ export const SigningPageResponseSchema = z.object({
     contentFormat: ClaContentFormatSchema,
     pdfUrl: z.string().nullable(),
     versionHash: z.string(),
-    source: ClaDocumentSourceSchema
+    source: ClaDocumentSourceSchema,
+    dropboxSignerRole: z.string().nullable().optional()
   }),
   signingMode: RepositorySigningModeSchema,
   dropboxSignConfigured: z.boolean(),
